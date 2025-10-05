@@ -8,23 +8,43 @@ using UnityEngine;
 using System.Runtime.InteropServices;
 using System.IO;
 using System.Reflection;
+using JetBrains.Annotations;
 
 namespace SilksongNeuralNetwork
 {
     [BepInPlugin("com.hackwhiz.nnagent", "Neural Net Agent for Silksong", "1.0.0")]
     public class Agent : BaseUnityPlugin
     {
+        public static Agent Instance { get; private set; }
+
         private HeroController hero;
         private bool initialized = false;
 
         private InputHandler myInputHandler;
         private HeroActions myInputActions;
 
+        // Змінна для зберігання посилання на екземпляр SceneBounds
+        private SceneBounds sceneBoundsInstance;
+
         private void Awake()
         {
             Logger.LogInfo("Plugin loaded and initialized");
 
-            NeuralNet.Test(Logger);
+            Instance = this;
+
+            // Перевіряємо, чи існує SceneBoundsManager в сцені.
+            // Якщо ні, створюємо його.
+            if (SceneBounds.Instance == null)
+            {
+                GameObject sceneBoundsObject = new GameObject("SceneBoundsManager");
+                sceneBoundsInstance = sceneBoundsObject.AddComponent<SceneBounds>();
+                // Зробіть його постійним між завантаженнями сцен, якщо потрібно
+                DontDestroyOnLoad(sceneBoundsObject);
+            }
+            else
+            {
+                sceneBoundsInstance = SceneBounds.Instance;
+            }
 
             hero = GameObject.FindFirstObjectByType<HeroController>();
             Harmony.CreateAndPatchAll(typeof(Agent), null);
@@ -32,9 +52,6 @@ namespace SilksongNeuralNetwork
 
         private void Initialize()
         {
-
-            // have to init nn here too
-
             try
             {
                 hero = GameObject.FindFirstObjectByType<HeroController>();
@@ -63,35 +80,50 @@ namespace SilksongNeuralNetwork
             return value ? 1f : 0f;
         }
 
-        // Normalizes a value to a range between 0 and 1
         public float Normalize(float value, float maxValue)
         {
-            if (maxValue == 0f) return 0f; // avoid division by zero
+            if (maxValue == 0f) return 0f;
             return value / maxValue;
+        }
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(GameManager), "BeginScene")]
+        public static void SceneLoadPostFix()
+        {
+            // Тепер використовуємо sceneBoundsInstance, який буде ініціалізовано
+            if (Instance.sceneBoundsInstance != null)
+            {
+                Instance.sceneBoundsInstance.UpdateBounds();
+                Instance.Logger.LogInfo($"UPDATED BOUNDS. MinX: {Instance.sceneBoundsInstance.minX}, MaxX: {Instance.sceneBoundsInstance.maxX}");
+            }
+            else
+            {
+                Instance.Logger.LogInfo("SceneBounds instance is null after scene load.");
+            }
+            Instance.Logger.LogInfo("LOADED SCENE");
+        }
+
+        public float NormalizeWithMinMax(float value, float min, float max)
+        {
+            if (max - min == 0) return 0;
+            return Mathf.Clamp01((value - min) / (max - min));
         }
 
         private List<float> GetData()
         {
-            List<float> data = new List<float>();
+            List<float> inputData = new List<float>();
+            // ... (ваш код для збору даних) ...
 
-            // Hornet State
-
-            List<float> hornetState = new List<float>();
-
-            if (PlayerData.instance != null)
+            // Приклад використання нормалізованих координат
+            if (hero != null && PlayerData.instance != null && sceneBoundsInstance != null)
             {
-                hornetState.Add(Normalize(PlayerData.instance.health, PlayerData.instance.maxHealth));
-                hornetState.Add(Normalize(PlayerData.instance.silk, PlayerData.instance.silkMax));
+                float normalizedX = NormalizeWithMinMax(hero.transform.position.x, sceneBoundsInstance.minX, sceneBoundsInstance.maxX);
+                float normalizedY = NormalizeWithMinMax(hero.transform.position.y, sceneBoundsInstance.minY, sceneBoundsInstance.maxY);
+                inputData.Add(normalizedX);
+                inputData.Add(normalizedY);
             }
 
-
-            data.Add(0f);
-
-            // Logger.LogInfo($"ONGROUND: {hero.cState.onGround}"); // TRUE
-            Logger.LogInfo($"RIGHT IS: {myInputActions.Right.IsPressed}");
-            Logger.LogInfo($"RSRIGHT IS: {myInputActions.RsRight.IsPressed}");
-
-            return data;
+            return inputData;
         }
 
         private void Update()
@@ -106,14 +138,16 @@ namespace SilksongNeuralNetwork
 
             if (initialized)
             {
-                // Example: Make the hero jump when on the ground
                 if (hero)
                 {
-                    var data = GetData();
-                    // var prediction = NeuralNet(data)
+                    // Тепер можна безпечно звертатися до sceneBoundsInstance
+                    if (sceneBoundsInstance != null)
+                    {
+                        Logger.LogInfo($"Current X: {hero.transform.position.x}, Max X: {sceneBoundsInstance.maxX}");
+                        Logger.LogInfo($"Current X: {hero.transform.position.y}, Max X: {sceneBoundsInstance.maxY}");
+                    }
                 }
             }
-
         }
     }
 }
