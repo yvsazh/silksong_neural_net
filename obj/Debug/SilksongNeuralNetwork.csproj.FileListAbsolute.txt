@@ -1,0 +1,7 @@
+C:\Program Files (x86)\Steam\steamapps\common\Hollow Knight Silksong\BepInEx\plugins\SilksongNeuralNetwork.dll
+C:\Program Files (x86)\Steam\steamapps\common\Hollow Knight Silksong\BepInEx\plugins\SilksongNeuralNetwork.pdb
+C:\Users\yaroslavsazhchenko\source\repos\SilksongNeuralNetwork\SilksongNeuralNetwork\obj\Debug\SilksongNeuralNetwork.csproj.AssemblyReference.cache
+C:\Users\yaroslavsazhchenko\source\repos\SilksongNeuralNetwork\SilksongNeuralNetwork\obj\Debug\SilksongNeuralNetwork.csproj.CoreCompileInputs.cache
+C:\Users\yaroslavsazhchenko\source\repos\SilksongNeuralNetwork\SilksongNeuralNetwork\obj\Debug\Silksong.2343B979.Up2Date
+C:\Users\yaroslavsazhchenko\source\repos\SilksongNeuralNetwork\SilksongNeuralNetwork\obj\Debug\SilksongNeuralNetwork.dll
+C:\Users\yaroslavsazhchenko\source\repos\SilksongNeuralNetwork\SilksongNeuralNetwork\obj\Debug\SilksongNeuralNetwork.pdb
