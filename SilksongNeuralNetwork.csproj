@@ -185,6 +185,7 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="DataCollector.cs" />
     <Compile Include="GameAction.cs" />
     <Compile Include="InputSimulator.cs" />
     <Compile Include="Main.cs" />

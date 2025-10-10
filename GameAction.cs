@@ -34,7 +34,7 @@ namespace SilksongNeuralNetwork
             method.Invoke(Agent.Instance.hero, new object[] { false });
         });
 
-        public static readonly GameAction Jump = new GameAction(2, "HeroJump", () =>
+        public static readonly GameAction Jump = new GameAction(2, "Jump", () =>
         {
             var type = Agent.Instance.hero.GetType();
 
@@ -53,7 +53,7 @@ namespace SilksongNeuralNetwork
         });
 
 
-        public static readonly GameAction BigJump = new GameAction(2, "BigJump", () =>
+        public static readonly GameAction BigJump = new GameAction(3, "BigJump", () =>
         {
             var type = Agent.Instance.hero.GetType();
 
@@ -71,7 +71,7 @@ namespace SilksongNeuralNetwork
             }
         });
 
-        public static readonly GameAction DoubleJump = new GameAction(3, "DoubleJump", () =>
+        public static readonly GameAction DoubleJump = new GameAction(4, "DoubleJump", () =>
         {
             var type = Agent.Instance.hero.GetType();
 
@@ -86,28 +86,28 @@ namespace SilksongNeuralNetwork
             }
         });
 
-        public static readonly GameAction GoRight = new GameAction(4, "Go Right", () =>
+        public static readonly GameAction GoRight = new GameAction(5, "Go Right", () =>
         {
             InputSimulator.PressRight();
             System.Threading.Thread.Sleep(100);
             InputSimulator.ReleaseRight();
         });
 
-        public static readonly GameAction GoLeft = new GameAction(5, "Go Left", () =>
+        public static readonly GameAction GoLeft = new GameAction(6, "Go Left", () =>
         {
             InputSimulator.PressLeft();
             System.Threading.Thread.Sleep(100);
             InputSimulator.ReleaseLeft();
         });
 
-        public static readonly GameAction Attack = new GameAction(6, "Attack", () =>
+        public static readonly GameAction Attack = new GameAction(7, "Attack", () =>
         {
             var type = Agent.Instance.hero.GetType();
             MethodInfo method = type.GetMethod("DoAttack", BindingFlags.NonPublic | BindingFlags.Instance);
             method.Invoke(Agent.Instance.hero, null);
         });
 
-        public static readonly GameAction DownAttack = new GameAction(7, "DownAttack", () =>
+        public static readonly GameAction DownAttack = new GameAction(8, "DownAttack", () =>
         {
             var type = Agent.Instance.hero.GetType();
             MethodInfo method = type.GetMethod("DownAttack", BindingFlags.NonPublic | BindingFlags.Instance);
