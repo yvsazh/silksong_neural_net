@@ -1,4 +1,6 @@
-﻿using System;
+﻿using InControl;
+using System;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using UnityEngine;
 
@@ -23,6 +25,7 @@ namespace SilksongNeuralNetwork
             public const byte VK_Z = 0x5A;     // Z key
             public const byte VK_X = 0x58;     // X key
             public const byte VK_C = 0x43;     // C key
+            public const byte VK_A = 0x41;
             // ...
         }
 
@@ -57,6 +60,9 @@ namespace SilksongNeuralNetwork
 
         public static void PressAttack() => PressKey(VK.VK_C);
         public static void ReleaseAttack() => ReleaseKey(VK.VK_C);
+
+        public static void PressBind() => PressKey(VK.VK_A);
+        public static void ReleaseBind() => ReleaseKey(VK.VK_A);
 
         // Метод для симуляції короткого натискання
         public static void TapKey(byte keyCode)

@@ -3,13 +3,20 @@ using BepInEx;
 using BepInEx.Logging;
 using GlobalEnums;
 using HarmonyLib;
+using HutongGames.PlayMaker;
+using HutongGames.PlayMaker.Actions;
+using InControl;
 using JetBrains.Annotations;
+
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
+
 using UnityEngine;
+
 
 using static SilksongNeuralNetwork.Utils;
 
@@ -27,14 +34,14 @@ namespace SilksongNeuralNetwork
         public InputHandler myInputHandler;
         public HeroActions myInputActions;
 
+        // ACTIONS
+        public PlayMakerFSM[] fsms;
+        public ListenForCast castAction;
+        public ListenForLeft leftAction;
+
         private NeuralNet _nn;
-        private bool _isTrainingMode = true; // Додайте перемикач для режимів
+        private bool _isTrainingMode = true;
 
-        // Контролер для бота
-
-        // Публічний доступ до контролера
-
-        // Змінна для зберігання посилання на екземпляр SceneBounds
         private SceneBounds sceneBoundsInstance;
 
         private void Awake()
@@ -108,16 +115,68 @@ namespace SilksongNeuralNetwork
                         // Створюємо екземпляр нейронної мережі
                         _nn = new NeuralNet(inputData.Count, outputData.Count);
                         Logger.LogInfo($"NeuralNet created with {inputData.Count} inputs and {outputData.Count} outputs.");
-
-                        initialized = true;
-                        Logger.LogInfo("Agent initialized successfully.");
-                        return true;
                     }
 
-                    // Ініціалізуємо контролер для бота
-
                     initialized = true;
+                    
                     Logger.LogInfo("Agent initialized successfully.");
+
+                    // FIND ALL ACTIONS
+                    fsms = hero.GetComponents<PlayMakerFSM>();
+                    Logger.LogInfo(fsms);
+                    Logger.LogInfo($"Found {fsms.Length} FSMs on hero");
+
+                    // FIND LISTENFORCAST
+                    castAction = null;
+                    foreach (var fsm in fsms)
+                    {
+                        foreach (var state in fsm.FsmStates)
+                        {
+                            foreach (var action in state.Actions)
+                            {
+                                if (action is ListenForCast cast)
+                                {
+                                    castAction = cast;
+                                    Logger.LogInfo($"Found ListenForCast in FSM: {fsm.FsmName}, State: {state.Name}");
+                                    break;
+                                }
+                            }
+                            if (castAction != null) break;
+                        }
+                        if (castAction != null) break;
+                    }
+
+                    if (castAction == null)
+                    {
+                        Logger.LogWarning("ListenForCast не знайдено!");
+                    }
+
+                    // FIND LEFT ACTION
+                    leftAction = null;
+                    foreach (var fsm in fsms)
+                    {
+                        foreach (var state in fsm.FsmStates)
+                        {
+                            foreach (var action in state.Actions)
+                            {
+                                if (action is ListenForLeft left)
+                                {
+                                    leftAction = left;
+                                    Logger.LogInfo($"Found ListenForCast in FSM: {fsm.FsmName}, State: {state.Name}");
+                                    break;
+                                }
+                            }
+                            if (castAction != null) break;
+                        }
+                        if (castAction != null) break;
+                    }
+
+                    if (castAction == null)
+                    {
+                        Logger.LogWarning("ListenForCast не знайдено!");
+                    }
+
+                    Logger.LogInfo(castAction);
                     return true;
                 }
                 else
@@ -158,7 +217,6 @@ namespace SilksongNeuralNetwork
                 {
                     initialized = Initialize();
                 }
-
                 if (initialized && hero != null && rb != null && _nn != null)
                 {
                     var input = DataCollector.GetInputData().ToArray();
@@ -170,22 +228,52 @@ namespace SilksongNeuralNetwork
                     if (!_isTrainingMode)
                     {
                         // Bot plays
+
+                        /*
+                        List<int> answers = new List<int>();
+
+                        for (int i = 0; i < predictedActions.Length; i++)
+                        {
+                            if (predictedActions[i])
+                            {
+                                answers.Add(i);
+                            }
+                        }
+
+                        foreach (var answerId in answers)
+                        {
+                            Logger.LogInfo($"Answer id: {answerId}");
+                            GameAction.GetById(answerId+1).Execute();
+                        }
+                        */
                     }
                     if (_isTrainingMode)
                     {
-                        double error = _nn.TrainOnline(input, target);
+                        double error = _nn.Train(input, target);
 
-                        if (Time.frameCount % 100 == 0)
+                        if (Time.frameCount % 1000 == 0)
                         {
                             Logger.LogInfo($"[NeuralNet] Instant training error: {error}");
                             Logger.LogInfo($"[NeuralNet] Prediction: {string.Join(",", predictedActions)} | Real Action: {string.Join(",", target)}");
                         }
                     }
 
-                    if (Input.GetKeyDown(KeyCode.F10))
+                    if (Input.GetKeyDown(KeyCode.W))
                     {
                         _isTrainingMode = !_isTrainingMode;
-                        Logger.LogInfo($"TRAINING MODE set to: {_isTrainingMode}");
+                    }
+                    
+                    if (Input.GetKeyDown(KeyCode.E))
+                    {
+                        GameAction.GoLeft.Execute();
+                    }
+
+                    if (Input.GetKeyDown(KeyCode.R))
+                    {
+                        if (DebugTools.Instance != null)
+                        {
+                            DebugTools.Instance.Visible = !DebugTools.Instance.Visible;
+                        }
                     }
                     if (Input.GetKeyDown(KeyCode.F11))
                     {

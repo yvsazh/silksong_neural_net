@@ -1,9 +1,13 @@
 ﻿using BepInEx;
+using GlobalEnums;
+using HutongGames.PlayMaker;
+using HutongGames.PlayMaker.Actions;
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Threading.Tasks;
+using TMProOld;
 using UnityEngine;
 
 namespace SilksongNeuralNetwork
@@ -26,15 +30,24 @@ namespace SilksongNeuralNetwork
             _action?.Invoke();
         }
 
-        // Статичний список усіх доступних дій
-        public static readonly GameAction Dash = new GameAction(1, "Dash", () =>
+        public static readonly GameAction GoRight = new GameAction(1, "Go Right", () =>
         {
-            var type = Agent.Instance.hero.GetType();
-            MethodInfo method = type.GetMethod("HeroDash", BindingFlags.NonPublic | BindingFlags.Instance);
-            method.Invoke(Agent.Instance.hero, new object[] { false });
+            InputSimulator.PressRight();
+            System.Threading.Thread.Sleep(100);
+            InputSimulator.ReleaseRight();
         });
 
-        public static readonly GameAction Jump = new GameAction(2, "Jump", () =>
+        public static readonly GameAction GoLeft = new GameAction(2, "Go Left", () =>
+        {
+            /*
+            InputSimulator.PressLeft();
+            System.Threading.Thread.Sleep(100);
+            InputSimulator.ReleaseLeft();
+            */
+            Agent.Instance.leftAction.Fsm.Event(Agent.Instance.leftAction.wasPressed);
+        });
+
+        public static readonly GameAction Jump = new GameAction(3, "Jump", () =>
         {
             var type = Agent.Instance.hero.GetType();
 
@@ -49,11 +62,11 @@ namespace SilksongNeuralNetwork
             {
                 // SMALL JUMP
                 method.Invoke(Agent.Instance.hero, null);
-            }    
+            }
         });
 
 
-        public static readonly GameAction BigJump = new GameAction(3, "BigJump", () =>
+        public static readonly GameAction BigJump = new GameAction(4, "BigJump", () =>
         {
             var type = Agent.Instance.hero.GetType();
 
@@ -71,7 +84,7 @@ namespace SilksongNeuralNetwork
             }
         });
 
-        public static readonly GameAction DoubleJump = new GameAction(4, "DoubleJump", () =>
+        public static readonly GameAction DoubleJump = new GameAction(5, "DoubleJump", () =>
         {
             var type = Agent.Instance.hero.GetType();
 
@@ -86,18 +99,12 @@ namespace SilksongNeuralNetwork
             }
         });
 
-        public static readonly GameAction GoRight = new GameAction(5, "Go Right", () =>
+        // Статичний список усіх доступних дій
+        public static readonly GameAction Dash = new GameAction(6, "Dash", () =>
         {
-            InputSimulator.PressRight();
-            System.Threading.Thread.Sleep(100);
-            InputSimulator.ReleaseRight();
-        });
-
-        public static readonly GameAction GoLeft = new GameAction(6, "Go Left", () =>
-        {
-            InputSimulator.PressLeft();
-            System.Threading.Thread.Sleep(100);
-            InputSimulator.ReleaseLeft();
+            var type = Agent.Instance.hero.GetType();
+            MethodInfo method = type.GetMethod("HeroDash", BindingFlags.NonPublic | BindingFlags.Instance);
+            method.Invoke(Agent.Instance.hero, new object[] { false });
         });
 
         public static readonly GameAction Attack = new GameAction(7, "Attack", () =>
@@ -111,7 +118,24 @@ namespace SilksongNeuralNetwork
         {
             var type = Agent.Instance.hero.GetType();
             MethodInfo method = type.GetMethod("DownAttack", BindingFlags.NonPublic | BindingFlags.Instance);
-            method.Invoke(Agent.Instance.hero, new object[] {false});
+            method.Invoke(Agent.Instance.hero, new object[] { false });
+        });
+
+        public static readonly GameAction UpAttack = new GameAction(9, "UpAttack", () =>
+        {
+            var type = Agent.Instance.hero.GetType();
+            MethodInfo method = type.GetMethod("Attack", BindingFlags.NonPublic | BindingFlags.Instance);
+            method.Invoke(Agent.Instance.hero, new object[] { AttackDirection.upward });
+        });
+
+        public static readonly GameAction Bind = new GameAction(10, "Bind", () =>
+        {
+
+            // 4. Викликай івент
+            if (Agent.Instance.castAction != null)
+            {
+                Agent.Instance.castAction.Fsm.Event(Agent.Instance.castAction.wasPressed);
+            }
         });
 
         public static readonly List<GameAction> AllActions = new List<GameAction>
@@ -124,6 +148,8 @@ namespace SilksongNeuralNetwork
             GoLeft,
             Attack,
             DownAttack,
+            UpAttack,
+            Bind,
         };
 
         public static GameAction GetById(int id)

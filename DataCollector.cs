@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using UnityEngine;
 
@@ -6,8 +7,63 @@ using static SilksongNeuralNetwork.Utils;
 
 namespace SilksongNeuralNetwork
 {
+
+    public class EnemyDistance
+    {
+        public Transform enemyTransform;
+        public float distance;
+    }
+
     public static class DataCollector
     {
+
+        private static List<float> GetEnemyData(HeroController hero, int enemyCount = 5)
+        {
+            List<float> enemyData = new List<float>();
+            Vector3 heroPosition = hero.transform.position;
+
+            float searchRadius = 100f;
+            int enemyLayer = 11;
+            int enemyLayerMask = 1 << enemyLayer;
+            Collider2D[] enemyColliders = Physics2D.OverlapCircleAll(heroPosition, searchRadius, enemyLayerMask);
+            List<EnemyDistance> sortedEnemies = new List<EnemyDistance>();
+            foreach (var enemyCollider in enemyColliders)
+            {
+                if (enemyCollider.gameObject == hero.gameObject) continue;
+                float dist = Vector2.Distance(heroPosition, enemyCollider.transform.position);
+                sortedEnemies.Add(new EnemyDistance { enemyTransform = enemyCollider.transform, distance = dist });
+            }
+            sortedEnemies.Sort((a, b) => a.distance.CompareTo(b.distance));
+
+            var closestEnemiesTransforms = sortedEnemies.Take(enemyCount).Select(e => e.enemyTransform.position).ToList();
+
+            if (DebugTools.Instance != null)
+            {
+                DebugTools.Instance.DrawLinesToTargets(heroPosition, closestEnemiesTransforms);
+            }
+
+            for (int i = 0; i < enemyCount; i++)
+            {
+                if (i < sortedEnemies.Count)
+                {
+                    Transform enemy = sortedEnemies[i].enemyTransform;
+                    Vector2 relativePosition = enemy.position - hero.transform.position;
+
+                    enemyData.Add(Normalize(relativePosition.x, searchRadius));
+                    enemyData.Add(Normalize(relativePosition.y, searchRadius));
+                    enemyData.Add(Normalize(sortedEnemies[i].distance, searchRadius));
+                }
+                else
+                {
+                    enemyData.Add(0f);
+                    enemyData.Add(0f);
+                    enemyData.Add(0f);
+                }
+            }
+
+            return enemyData;
+        }
+
         public static List<float> GetInputData()
         {
             List<float> inputData = new List<float>();
@@ -138,10 +194,14 @@ namespace SilksongNeuralNetwork
                 globalActions.Add(BoolToFloat(PlayerData.instance.hasHarpoonDash));
             }
 
+            // ENEMY DATA
+            List<float> enemyData = GetEnemyData(hero);
+
 
             // MERGE
             inputData.AddRange(hornetState);
             inputData.AddRange(globalActions);
+            inputData.AddRange(enemyData);
 
             return inputData;
         }

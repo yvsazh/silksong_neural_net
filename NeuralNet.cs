@@ -23,7 +23,7 @@ namespace SilksongNeuralNetwork
         public int OutputSize { get; private set; }
 
         // Hyper-parameters (changeable at runtime)
-        public double LearningRate { get; set; } = 0.01;       // typical small LR for online updates
+        public double LearningRate { get; set; } = 0.01;
         public double Momentum { get; set; } = 0.9;
 
         // Construct with dynamic hidden layer sizing if you don't want to pass explicit layers
@@ -93,7 +93,7 @@ namespace SilksongNeuralNetwork
         /// Train once on a single sample (online / per-frame style). Returns the instantaneous training error.
         /// Uses BackPropagationLearning.Run(...) which performs one update. Keep LearningRate small for stability.
         /// </summary>
-        public double TrainOnline(float[] input, float[] target)
+        public double Train(float[] input, float[] target)
         {
             if (input == null) throw new ArgumentNullException(nameof(input));
             if (target == null) throw new ArgumentNullException(nameof(target));
@@ -106,7 +106,6 @@ namespace SilksongNeuralNetwork
 
             lock (_lock)
             {
-                // Run returns the squared error for this sample (depends on the teacher implementation)
                 error = _teacher.Run(inD, tgtD);
             }
 
@@ -177,41 +176,6 @@ namespace SilksongNeuralNetwork
             float[] f = new float[arr.Length];
             for (int i = 0; i < arr.Length; i++) f[i] = (float)arr[i];
             return f;
-        }
-    }
-
-    // Example MonoBehaviour showing per-frame training usage
-    public class BehaviourCloningAgent : MonoBehaviour
-    {
-        private NeuralNet _nn;
-
-        void Start()
-        {
-            var input = DataCollector.GetInputData();
-            var output = DataCollector.GetOutputData();
-            _nn = new NeuralNet(input.Count, output.Count);
-        }
-
-        void Update()
-        {
-            // 1) Collect current frame data
-            var input = DataCollector.GetInputData().ToArray();
-            var target = DataCollector.GetOutputData().ToArray();
-
-            // 2) Predict (you can use probabilities to blend or pick actions via threshold)
-            var pred = _nn.Predict(input);
-            var actions = _nn.ToActions(pred, 0.5f);
-
-            // 3) (Optional) apply actions to your agent here. Be careful: direct injection into input systems
-            // may require additional code; for now we just log a compact representation
-            Debug.Log($"[BehaviourCloningAgent] Pred: {string.Join(",", pred)} | Act: {string.Join(",", actions)}");
-
-            // 4) Train online with the (input, target) pair — one learning iteration per frame
-            double err = _nn.TrainOnline(input, target);
-
-            // (Optional) monitor training error
-            if (Time.frameCount % 60 == 0) // every 60 frames
-                Debug.Log($"[BehaviourCloningAgent] Instant error: {err}");
         }
     }
 }

@@ -124,6 +124,10 @@
     <Reference Include="ICSharpCode.SharpZipLib">
       <HintPath>accord\ICSharpCode.SharpZipLib.dll</HintPath>
     </Reference>
+    <Reference Include="PlayMaker, Version=1.6.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\Hollow Knight Silksong\Hollow Knight Silksong_Data\Managed\PlayMaker.dll</HintPath>
+    </Reference>
     <Reference Include="SharpDX, Version=4.2.0.0, Culture=neutral, PublicKeyToken=b4dcf0f35e5521f1, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
       <HintPath>accord\SharpDX.dll</HintPath>
@@ -186,6 +190,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="DataCollector.cs" />
+    <Compile Include="DebugTools.cs" />
     <Compile Include="GameAction.cs" />
     <Compile Include="InputSimulator.cs" />
     <Compile Include="Main.cs" />
