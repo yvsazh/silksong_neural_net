@@ -33,18 +33,13 @@ namespace SilksongNeuralNetwork
         public static readonly GameAction GoRight = new GameAction(1, "Go Right", () =>
         {
             InputSimulator.PressRight();
-            System.Threading.Thread.Sleep(100);
             InputSimulator.ReleaseRight();
         });
 
         public static readonly GameAction GoLeft = new GameAction(2, "Go Left", () =>
         {
-            /*
-            InputSimulator.PressLeft();
-            System.Threading.Thread.Sleep(100);
-            InputSimulator.ReleaseLeft();
-            */
-            Agent.Instance.leftAction.Fsm.Event(Agent.Instance.leftAction.wasPressed);
+            InputSimulator.PressRight();
+            InputSimulator.ReleaseRight();
         });
 
         public static readonly GameAction Jump = new GameAction(3, "Jump", () =>

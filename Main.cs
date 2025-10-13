@@ -37,7 +37,6 @@ namespace SilksongNeuralNetwork
         // ACTIONS
         public PlayMakerFSM[] fsms;
         public ListenForCast castAction;
-        public ListenForLeft leftAction;
 
         private NeuralNet _nn;
         private bool _isTrainingMode = true;
@@ -151,32 +150,6 @@ namespace SilksongNeuralNetwork
                         Logger.LogWarning("ListenForCast не знайдено!");
                     }
 
-                    // FIND LEFT ACTION
-                    leftAction = null;
-                    foreach (var fsm in fsms)
-                    {
-                        foreach (var state in fsm.FsmStates)
-                        {
-                            foreach (var action in state.Actions)
-                            {
-                                if (action is ListenForLeft left)
-                                {
-                                    leftAction = left;
-                                    Logger.LogInfo($"Found ListenForCast in FSM: {fsm.FsmName}, State: {state.Name}");
-                                    break;
-                                }
-                            }
-                            if (castAction != null) break;
-                        }
-                        if (castAction != null) break;
-                    }
-
-                    if (castAction == null)
-                    {
-                        Logger.LogWarning("ListenForCast не знайдено!");
-                    }
-
-                    Logger.LogInfo(castAction);
                     return true;
                 }
                 else
@@ -263,9 +236,9 @@ namespace SilksongNeuralNetwork
                         _isTrainingMode = !_isTrainingMode;
                     }
                     
-                    if (Input.GetKeyDown(KeyCode.E))
+                    if (Input.GetKey(KeyCode.E))
                     {
-                        GameAction.GoLeft.Execute();
+                        GameAction.GoRight.Execute();
                     }
 
                     if (Input.GetKeyDown(KeyCode.R))
