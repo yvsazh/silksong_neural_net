@@ -198,6 +198,9 @@ namespace SilksongNeuralNetwork
                     var predictedProbabilities = _nn.Predict(input);
                     var predictedActions = _nn.ToActions(predictedProbabilities, 0.5f);
 
+                    // DEBUG THING HAVE TO DELETE
+                    hero.AddSilk(999, false);
+
                     if (!_isTrainingMode)
                     {
                         // Bot plays
@@ -236,9 +239,13 @@ namespace SilksongNeuralNetwork
                         _isTrainingMode = !_isTrainingMode;
                     }
                     
-                    if (Input.GetKey(KeyCode.E))
+                    if (Input.GetKeyDown(KeyCode.E))
                     {
-                        GameAction.GoRight.Execute();
+                        GameAction.Jump.Execute();
+                    }
+                    if (Input.GetKeyDown(KeyCode.G))
+                    {
+                        GameAction.BigJump.Execute();
                     }
 
                     if (Input.GetKeyDown(KeyCode.R))

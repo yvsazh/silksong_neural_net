@@ -72,25 +72,28 @@ namespace SilksongNeuralNetwork
             List<float> globalActions = new List<float>();
 
             HeroController hero = Agent.Instance.hero;
+            var heroType = hero.GetType();
 
             if (PlayerData.instance != null)
             {
+                // ---- Basics ---- 
                 hornetState.Add(Normalize(PlayerData.instance.health, PlayerData.instance.maxHealth));
                 hornetState.Add(Normalize(PlayerData.instance.silk, PlayerData.instance.silkMax));
-                // coords x and y
+                // ----  coords x and y ---- 
                 hornetState.Add(Normalize(hero.transform.position.x, 1000)); // should try to find max dynamicly
                 hornetState.Add(Normalize(hero.transform.position.y, 1000)); // should try to find max dynamicly
 
-                // velocity
+                // ---- velocity ---- 
                 hornetState.Add(Normalize(hero.Body.linearVelocity.x, hero.GetRunSpeed()));
                 hornetState.Add(Normalize(hero.Body.linearVelocity.y, hero.JUMP_SPEED));
 
-                // state
+                // ---- STATES ---- 
                 hornetState.Add(BoolToFloat(hero.cState.facingRight));
                 hornetState.Add(BoolToFloat(hero.cState.onGround));
                 hornetState.Add(BoolToFloat(hero.cState.jumping));
                 hornetState.Add(BoolToFloat(hero.cState.shuttleCock));
-                hornetState.Add(BoolToFloat(hero.cState.floating));
+                hornetState.Add(BoolToFloat(hero.cState.floating)); // Don't know if it worls
+                hornetState.Add(BoolToFloat(hero.umbrellaFSM.ActiveStateName == "Float Idle")); // IF FLOATING = true, IT WORKS 100 procent
                 hornetState.Add(BoolToFloat(hero.cState.wallJumping));
                 hornetState.Add(BoolToFloat(hero.cState.doubleJumping));
                 hornetState.Add(BoolToFloat(hero.cState.nailCharging));
@@ -178,6 +181,50 @@ namespace SilksongNeuralNetwork
                 hornetState.Add(BoolToFloat(hero.cState.fakeHurt));
                 hornetState.Add(BoolToFloat(hero.cState.isInCutsceneMovement));
                 hornetState.Add(BoolToFloat(hero.cState.isTriggerEventsPaused));
+
+                // ------ CAN PLAYER DO SOMETHING?? ------ 
+
+                MethodInfo canFloatMethod = heroType.GetMethod("CanFloat", BindingFlags.NonPublic | BindingFlags.Instance);
+                bool canFloat = (bool)canFloatMethod.Invoke(hero, null);
+                hornetState.Add(BoolToFloat(canFloat));
+
+                MethodInfo canWallSlideMethod = heroType.GetMethod("CanWallSlide", BindingFlags.NonPublic | BindingFlags.Instance);
+                bool canWallSlide = (bool)canWallSlideMethod.Invoke(hero, null);
+                hornetState.Add(BoolToFloat(canWallSlide)); // Don't sure if it works but...
+
+                MethodInfo canRecoilMethod = heroType.GetMethod("CanRecoil", BindingFlags.NonPublic | BindingFlags.Instance);
+                bool canRecoil = (bool)canRecoilMethod.Invoke(hero, null);
+                hornetState.Add(BoolToFloat(canRecoil)); // Don't sure if it works but...
+
+                MethodInfo canWallJumpMethod = heroType.GetMethod("CanWallJump", BindingFlags.NonPublic | BindingFlags.Instance);
+                bool canWallJump = (bool)canWallJumpMethod.Invoke(hero, null);
+                hornetState.Add(BoolToFloat(canWallJump)); // Don't sure if it works but...
+
+                MethodInfo canDownAttackMethod = heroType.GetMethod("CanDownAttack", BindingFlags.NonPublic | BindingFlags.Instance);
+                bool canDownAttack = (bool)canDownAttackMethod.Invoke(hero, null);
+                hornetState.Add(BoolToFloat(canDownAttack)); // Don't sure if it works but...
+
+                MethodInfo canAttackActionMethod = heroType.GetMethod("CanAttackAction", BindingFlags.NonPublic | BindingFlags.Instance);
+                bool canAttackAction = (bool)canAttackActionMethod.Invoke(hero, null);
+                hornetState.Add(BoolToFloat(canAttackAction)); // Don't sure if it works but...
+
+                MethodInfo canWallScrambleMethod = heroType.GetMethod("CanWallScramble", BindingFlags.NonPublic | BindingFlags.Instance);
+                bool canWallScramble = (bool)canWallScrambleMethod.Invoke(hero, null);
+                hornetState.Add(BoolToFloat(canWallScramble)); // Don't sure if it works but...
+
+                hornetState.Add(BoolToFloat(hero.CanJump()));
+                hornetState.Add(BoolToFloat(hero.CanDoubleJump()));
+                hornetState.Add(BoolToFloat(hero.CanDash()));
+                hornetState.Add(BoolToFloat(hero.CanAttack()));
+                hornetState.Add(BoolToFloat(hero.CanTakeDamage()));
+                hornetState.Add(BoolToFloat(hero.CanTryHarpoonDash()));
+                hornetState.Add(BoolToFloat(hero.CanHarpoonDash()));
+                hornetState.Add(BoolToFloat(hero.CanCast()));
+                hornetState.Add(BoolToFloat(hero.CanBind()));
+                hornetState.Add(BoolToFloat(hero.CanNailArt()));
+                hornetState.Add(BoolToFloat(hero.CanSprint()));
+                hornetState.Add(BoolToFloat(hero.CanSuperJump()));
+                hornetState.Add(BoolToFloat(hero.CanThrowTool()));
             }
 
             // Global Actions
@@ -217,7 +264,12 @@ namespace SilksongNeuralNetwork
             bool bigJump = false;
             bool doubleJump = false;
 
+            bool attack = false;
+            bool downAttack = false;
+            bool upAttack = false;
+
             var heroType = Agent.Instance.hero.GetType();
+
 
             // HELP VARIABLES
             FieldInfo jumped_stepsField = heroType.GetField("jumped_steps", BindingFlags.NonPublic | BindingFlags.Instance);
@@ -239,12 +291,12 @@ namespace SilksongNeuralNetwork
                 jump = true;
                 bigJump = false;
             }
-            else if (jumped_steps > 7 && !doubleJumped)
+            if (jumped_steps > 7 && !doubleJumped)
             {
                 jump = false;
                 bigJump = true;
             }
-            else if (doubleJumped)
+            if (doubleJumped)
             {
                 doubleJump = true;
                 jump = false;
@@ -259,8 +311,34 @@ namespace SilksongNeuralNetwork
             outputData.Add(BoolToFloat(jump));
             outputData.Add(BoolToFloat(bigJump));
             outputData.Add(BoolToFloat(doubleJump));
+
             outputData.Add(BoolToFloat(Agent.Instance.myInputActions.Dash.IsPressed));
-            outputData.Add(BoolToFloat(Agent.Instance.myInputActions.Attack.IsPressed));
+            // Attacks in different directions
+            
+            if (Agent.Instance.hero.cState.attacking && !Agent.Instance.myInputActions.Up.IsPressed && !Agent.Instance.myInputActions.Down.IsPressed)
+            {
+                attack = true;
+                upAttack = false;
+                downAttack = false;
+            } 
+            if (Agent.Instance.hero.cState.attacking && Agent.Instance.myInputActions.Up.IsPressed && !Agent.Instance.myInputActions.Down.IsPressed)
+            {
+                attack = false;
+                upAttack = true;
+                downAttack = false;
+            }
+            if (Agent.Instance.myInputActions.Attack.IsPressed && !Agent.Instance.myInputActions.Up.IsPressed && Agent.Instance.myInputActions.Down.IsPressed && !Agent.Instance.hero.cState.onGround)
+            {
+                attack = false;
+                upAttack = false;
+                downAttack = true;
+            }
+            
+
+           
+            outputData.Add(BoolToFloat(attack));
+            outputData.Add(BoolToFloat(downAttack));
+            outputData.Add(BoolToFloat(upAttack));
 
             return outputData;
         }

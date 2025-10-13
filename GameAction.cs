@@ -47,7 +47,7 @@ namespace SilksongNeuralNetwork
             var type = Agent.Instance.hero.GetType();
 
             MethodInfo method = type.GetMethod(
-                "HeroJump",
+                "Jump",
                 BindingFlags.NonPublic | BindingFlags.Instance,
                 null,
                 Type.EmptyTypes,
