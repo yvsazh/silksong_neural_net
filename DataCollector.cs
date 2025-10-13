@@ -195,34 +195,6 @@ namespace SilksongNeuralNetwork
                 hornetState.Add(BoolToFloat(hero.cState.isInCutsceneMovement));
                 hornetState.Add(BoolToFloat(hero.cState.isTriggerEventsPaused));
 
-                // ------ CAN PLAYER DO SOMETHING?? ------ 
-
-                
-                MethodInfo canFloatMethod = heroType.GetMethod("CanFloat", BindingFlags.NonPublic | BindingFlags.Instance);
-                bool canFloat = (bool)canFloatMethod.Invoke(hero, null);
-                hornetState.Add(BoolToFloat(canFloat));
-
-                MethodInfo canWallSlideMethod = heroType.GetMethod("CanWallSlide", BindingFlags.NonPublic | BindingFlags.Instance);
-                bool canWallSlide = (bool)canWallSlideMethod.Invoke(hero, null);
-                hornetState.Add(BoolToFloat(canWallSlide));
-
-                MethodInfo canRecoilMethod = heroType.GetMethod("CanRecoil", BindingFlags.NonPublic | BindingFlags.Instance);
-                bool canRecoil = (bool)canRecoilMethod.Invoke(hero, null);
-                hornetState.Add(BoolToFloat(canRecoil));
-
-                MethodInfo canDownAttackMethod = heroType.GetMethod("CanDownAttack", BindingFlags.NonPublic | BindingFlags.Instance);
-                bool canDownAttack = (bool)canDownAttackMethod.Invoke(hero, null);
-                hornetState.Add(BoolToFloat(canDownAttack));
-
-                MethodInfo canAttackActionMethod = heroType.GetMethod("CanAttackAction", BindingFlags.NonPublic | BindingFlags.Instance);
-                bool canAttackAction = (bool)canAttackActionMethod.Invoke(hero, null);
-                hornetState.Add(BoolToFloat(canAttackAction));
-
-                MethodInfo canWallScrambleMethod = heroType.GetMethod("CanWallScramble", BindingFlags.NonPublic | BindingFlags.Instance);
-                bool canWallScramble = (bool)canWallScrambleMethod.Invoke(hero, null);
-                hornetState.Add(BoolToFloat(canWallScramble));
-                
-
                 hornetState.Add(BoolToFloat(hero.CanJump()));
                 hornetState.Add(BoolToFloat(hero.CanDoubleJump()));
                 hornetState.Add(BoolToFloat(hero.CanDash()));
@@ -279,6 +251,11 @@ namespace SilksongNeuralNetwork
             bool attack = false;
             bool downAttack = false;
             bool upAttack = false;
+
+            bool usedFirstTool = false;
+            bool usedSecondTool = false;
+
+            bool usedHarpoon = false;
 
             var heroType = Agent.Instance.hero.GetType();
 
@@ -345,6 +322,39 @@ namespace SilksongNeuralNetwork
             outputData.Add(BoolToFloat(attack));
             outputData.Add(BoolToFloat(downAttack));
             outputData.Add(BoolToFloat(upAttack));
+
+            outputData.Add(BoolToFloat(Agent.Instance.myInputActions.Cast.WasPressed));
+
+            if (Agent.Instance.myInputActions.Down.IsPressed && Agent.Instance.hero.cState.isToolThrowing)
+            {
+                usedFirstTool = true;
+                usedSecondTool = false;
+            }
+
+            if (Agent.Instance.myInputActions.Up.IsPressed && Agent.Instance.hero.cState.isToolThrowing)
+            {
+                usedSecondTool = true;
+                usedFirstTool = false;
+            }
+
+            var type = Agent.Instance.hero.GetType();
+            FieldInfo field = type.GetField("skillEventTarget", BindingFlags.NonPublic | BindingFlags.Instance);
+            PlayMakerFSM fsm = (PlayMakerFSM)field.GetValue(Agent.Instance.hero);
+
+            outputData.Add(BoolToFloat(fsm.ActiveStateName == "A Sphere Antic" || fsm.ActiveStateName == "A Sphere" || fsm.ActiveStateName == "A Sphere Recover")); // MAIN ABILITY
+            outputData.Add(BoolToFloat(usedFirstTool));
+            outputData.Add(BoolToFloat(usedSecondTool));
+
+            if (Agent.Instance.hero.harpoonDashFSM.ActiveStateName == "Antic" || Agent.Instance.hero.harpoonDashFSM.ActiveStateName == "Throw" || Agent.Instance.hero.harpoonDashFSM.ActiveStateName == "Dash")
+            {
+                usedHarpoon = true;
+            }
+            else
+            {
+                usedHarpoon = false;
+            }
+
+            outputData.Add(BoolToFloat(usedHarpoon));
 
             return outputData;
         }

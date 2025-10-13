@@ -193,6 +193,7 @@
     <Compile Include="DebugTools.cs" />
     <Compile Include="GameAction.cs" />
     <Compile Include="InputSimulator.cs" />
+    <Compile Include="Logger.cs" />
     <Compile Include="Main.cs" />
     <Compile Include="NeuralNet.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

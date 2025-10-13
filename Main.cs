@@ -43,11 +43,19 @@ namespace SilksongNeuralNetwork
 
         private SceneBounds sceneBoundsInstance;
 
+        private FunctionLogger _functionLogger;
+
         private void Awake()
         {
             Logger.LogInfo("Plugin loaded and initialized");
 
             Instance = this;
+
+            _functionLogger = new FunctionLogger(
+                "com.hackwhiz.nnagent.functionlogger",
+                Path.Combine(Paths.GameRootPath, "function_logs.txt"),
+                Logger
+            );
 
             // Перевіряємо, чи існує SceneBoundsManager в сцені.
             // Якщо ні, створюємо його.
@@ -181,6 +189,15 @@ namespace SilksongNeuralNetwork
             }
             Instance.Logger.LogInfo("LOADED SCENE");
         }
+        public void PrintUsedLayersInScene()
+        {
+            var allObjects = GameObject.FindObjectsOfType<GameObject>();
+            var usedLayers = new HashSet<int>(allObjects.Select(obj => obj.layer));
+            foreach (var layer in usedLayers)
+            {
+                Debug.Log($"Layer {layer}: {LayerMask.LayerToName(layer)}");
+            }
+        }
 
         private void Update()
         {
@@ -200,6 +217,8 @@ namespace SilksongNeuralNetwork
 
                     // DEBUG THING HAVE TO DELETE
                     hero.AddSilk(999, false);
+
+                    Logger.LogInfo(string.Join(", ", target.Skip(Math.Max(0, target.Length - 4))));
 
                     if (!_isTrainingMode)
                     {
@@ -241,11 +260,7 @@ namespace SilksongNeuralNetwork
                     
                     if (Input.GetKeyDown(KeyCode.E))
                     {
-                        GameAction.Jump.Execute();
-                    }
-                    if (Input.GetKeyDown(KeyCode.G))
-                    {
-                        GameAction.BigJump.Execute();
+                        GameAction.HarpoonDash.Execute();
                     }
 
                     if (Input.GetKeyDown(KeyCode.R))

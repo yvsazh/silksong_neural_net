@@ -125,13 +125,58 @@ namespace SilksongNeuralNetwork
 
         public static readonly GameAction Bind = new GameAction(10, "Bind", () =>
         {
-
-            // 4. Викликай івент
             if (Agent.Instance.castAction != null)
             {
                 Agent.Instance.castAction.Fsm.Event(Agent.Instance.castAction.wasPressed);
             }
         });
+
+        public static readonly GameAction MainAbility = new GameAction(11, "MainAbility", () =>
+        {
+            var type = Agent.Instance.hero.GetType();
+            MethodInfo method = type.GetMethod("ThrowTool", BindingFlags.NonPublic | BindingFlags.Instance);
+            method.Invoke(Agent.Instance.hero, new object[] { false });
+        });
+
+        public static readonly GameAction FirstTool = new GameAction(12, "FirstTool", () =>
+        {
+            InputSimulator.PressDown();
+            Agent.Instance.StartCoroutine(DelayedToolExecution(
+                () => {
+                    var type = Agent.Instance.hero.GetType();
+                    MethodInfo method = type.GetMethod("ThrowTool", BindingFlags.NonPublic | BindingFlags.Instance);
+                    method.Invoke(Agent.Instance.hero, new object[] { false });
+                },
+                InputSimulator.ReleaseDown
+            ));
+        });
+
+        public static readonly GameAction SecondTool = new GameAction(13, "SecondTool", () =>
+        {
+            InputSimulator.PressUp();
+            Agent.Instance.StartCoroutine(DelayedToolExecution(
+                () => {
+                    var type = Agent.Instance.hero.GetType();
+                    MethodInfo method = type.GetMethod("ThrowTool", BindingFlags.NonPublic | BindingFlags.Instance);
+                    method.Invoke(Agent.Instance.hero, new object[] { false });
+                },
+                InputSimulator.ReleaseUp
+            ));
+        });
+
+        public static readonly GameAction HarpoonDash = new GameAction(14, "HarpoonDash", () =>
+        {
+            Agent.Instance.hero.harpoonDashFSM.SendEventSafe("DO MOVE");
+        });
+
+        // help functions
+        private static IEnumerator DelayedToolExecution(Action reflectionMethod, Action releaseAction)
+        {
+            yield return new WaitForSeconds(0.1f); // 300 milliseconds delay
+            reflectionMethod();
+            yield return new WaitForSeconds(0.1f); // Additional 100 milliseconds delay
+            releaseAction();
+        }
 
         public static readonly List<GameAction> AllActions = new List<GameAction>
         {
@@ -145,6 +190,10 @@ namespace SilksongNeuralNetwork
             DownAttack,
             UpAttack,
             Bind,
+            MainAbility,
+            FirstTool,
+            SecondTool,
+            HarpoonDash,
         };
 
         public static GameAction GetById(int id)
