@@ -7,7 +7,6 @@ using static SilksongNeuralNetwork.Utils;
 
 namespace SilksongNeuralNetwork
 {
-
     public class EnemyDistance
     {
         public Transform enemyTransform;
@@ -16,6 +15,12 @@ namespace SilksongNeuralNetwork
 
     public static class DataCollector
     {
+        // Ініціалізація системи променів (викликати один раз на початку)
+        static DataCollector()
+        {
+            // Можеш налаштувати кількість променів і максимальну відстань
+            RaySensorSystem.Initialize(rayCount: 16, maxDistance: 20f);
+        }
 
         private static List<float> GetEnemyData(HeroController hero, int enemyCount = 5)
         {
@@ -27,6 +32,7 @@ namespace SilksongNeuralNetwork
             int enemyLayerMask = 1 << enemyLayer;
             Collider2D[] enemyColliders = Physics2D.OverlapCircleAll(heroPosition, searchRadius, enemyLayerMask);
             List<EnemyDistance> sortedEnemies = new List<EnemyDistance>();
+
             foreach (var enemyCollider in enemyColliders)
             {
                 if (enemyCollider.gameObject == hero.gameObject) continue;
@@ -64,6 +70,13 @@ namespace SilksongNeuralNetwork
             return enemyData;
         }
 
+        // Новий метод для отримання даних з променів-сенсорів
+        private static List<float> GetRaySensorData(HeroController hero)
+        {
+            Vector2 heroPosition = hero.transform.position;
+            return RaySensorSystem.GetRaySensorFloatData(heroPosition);
+        }
+
         public static List<float> GetInputData()
         {
             List<float> inputData = new List<float>();
@@ -92,8 +105,8 @@ namespace SilksongNeuralNetwork
                 hornetState.Add(BoolToFloat(hero.cState.onGround));
                 hornetState.Add(BoolToFloat(hero.cState.jumping));
                 hornetState.Add(BoolToFloat(hero.cState.shuttleCock));
-                hornetState.Add(BoolToFloat(hero.cState.floating)); // Don't know if it worls
-                hornetState.Add(BoolToFloat(hero.umbrellaFSM.ActiveStateName == "Float Idle")); // IF FLOATING = true, IT WORKS 100 procent
+                hornetState.Add(BoolToFloat(hero.cState.floating));
+                hornetState.Add(BoolToFloat(hero.umbrellaFSM.ActiveStateName == "Float Idle"));
                 hornetState.Add(BoolToFloat(hero.cState.wallJumping));
                 hornetState.Add(BoolToFloat(hero.cState.doubleJumping));
                 hornetState.Add(BoolToFloat(hero.cState.nailCharging));
@@ -184,33 +197,31 @@ namespace SilksongNeuralNetwork
 
                 // ------ CAN PLAYER DO SOMETHING?? ------ 
 
+                
                 MethodInfo canFloatMethod = heroType.GetMethod("CanFloat", BindingFlags.NonPublic | BindingFlags.Instance);
                 bool canFloat = (bool)canFloatMethod.Invoke(hero, null);
                 hornetState.Add(BoolToFloat(canFloat));
 
                 MethodInfo canWallSlideMethod = heroType.GetMethod("CanWallSlide", BindingFlags.NonPublic | BindingFlags.Instance);
                 bool canWallSlide = (bool)canWallSlideMethod.Invoke(hero, null);
-                hornetState.Add(BoolToFloat(canWallSlide)); // Don't sure if it works but...
+                hornetState.Add(BoolToFloat(canWallSlide));
 
                 MethodInfo canRecoilMethod = heroType.GetMethod("CanRecoil", BindingFlags.NonPublic | BindingFlags.Instance);
                 bool canRecoil = (bool)canRecoilMethod.Invoke(hero, null);
-                hornetState.Add(BoolToFloat(canRecoil)); // Don't sure if it works but...
-
-                MethodInfo canWallJumpMethod = heroType.GetMethod("CanWallJump", BindingFlags.NonPublic | BindingFlags.Instance);
-                bool canWallJump = (bool)canWallJumpMethod.Invoke(hero, null);
-                hornetState.Add(BoolToFloat(canWallJump)); // Don't sure if it works but...
+                hornetState.Add(BoolToFloat(canRecoil));
 
                 MethodInfo canDownAttackMethod = heroType.GetMethod("CanDownAttack", BindingFlags.NonPublic | BindingFlags.Instance);
                 bool canDownAttack = (bool)canDownAttackMethod.Invoke(hero, null);
-                hornetState.Add(BoolToFloat(canDownAttack)); // Don't sure if it works but...
+                hornetState.Add(BoolToFloat(canDownAttack));
 
                 MethodInfo canAttackActionMethod = heroType.GetMethod("CanAttackAction", BindingFlags.NonPublic | BindingFlags.Instance);
                 bool canAttackAction = (bool)canAttackActionMethod.Invoke(hero, null);
-                hornetState.Add(BoolToFloat(canAttackAction)); // Don't sure if it works but...
+                hornetState.Add(BoolToFloat(canAttackAction));
 
                 MethodInfo canWallScrambleMethod = heroType.GetMethod("CanWallScramble", BindingFlags.NonPublic | BindingFlags.Instance);
                 bool canWallScramble = (bool)canWallScrambleMethod.Invoke(hero, null);
-                hornetState.Add(BoolToFloat(canWallScramble)); // Don't sure if it works but...
+                hornetState.Add(BoolToFloat(canWallScramble));
+                
 
                 hornetState.Add(BoolToFloat(hero.CanJump()));
                 hornetState.Add(BoolToFloat(hero.CanDoubleJump()));
@@ -244,22 +255,23 @@ namespace SilksongNeuralNetwork
             // ENEMY DATA
             List<float> enemyData = GetEnemyData(hero);
 
+            // RAY SENSOR DATA (NEW!)
+            List<float> raySensorData = GetRaySensorData(hero);
 
             // MERGE
             inputData.AddRange(hornetState);
             inputData.AddRange(globalActions);
             inputData.AddRange(enemyData);
+            inputData.AddRange(raySensorData); // Додаємо дані з променів
 
             return inputData;
         }
 
         public static List<float> GetOutputData()
         {
-
             List<float> outputData = new List<float>();
 
             // standart
-
             bool jump = false;
             bool bigJump = false;
             bool doubleJump = false;
@@ -270,7 +282,6 @@ namespace SilksongNeuralNetwork
 
             var heroType = Agent.Instance.hero.GetType();
 
-
             // HELP VARIABLES
             FieldInfo jumped_stepsField = heroType.GetField("jumped_steps", BindingFlags.NonPublic | BindingFlags.Instance);
             int jumped_steps = (int)jumped_stepsField.GetValue(Agent.Instance.hero);
@@ -278,14 +289,11 @@ namespace SilksongNeuralNetwork
             FieldInfo doubleJumpedField = heroType.GetField("doubleJumped", BindingFlags.NonPublic | BindingFlags.Instance);
             bool doubleJumped = (bool)doubleJumpedField.GetValue(Agent.Instance.hero);
 
-            // Have to change when DoubleJump, when BigJump and when Jump. This actions are different
-            // Same thing with Attack, AttackDown, AttackUp ...
-
+            // Movement
             outputData.Add(BoolToFloat(Agent.Instance.myInputActions.Right.IsPressed));
             outputData.Add(BoolToFloat(Agent.Instance.myInputActions.Left.IsPressed));
 
-            // get big jump
-
+            // Jump logic
             if (jumped_steps < 7 && jumped_steps > 1 && !doubleJumped)
             {
                 jump = true;
@@ -313,14 +321,14 @@ namespace SilksongNeuralNetwork
             outputData.Add(BoolToFloat(doubleJump));
 
             outputData.Add(BoolToFloat(Agent.Instance.myInputActions.Dash.IsPressed));
+
             // Attacks in different directions
-            
             if (Agent.Instance.hero.cState.attacking && !Agent.Instance.myInputActions.Up.IsPressed && !Agent.Instance.myInputActions.Down.IsPressed)
             {
                 attack = true;
                 upAttack = false;
                 downAttack = false;
-            } 
+            }
             if (Agent.Instance.hero.cState.attacking && Agent.Instance.myInputActions.Up.IsPressed && !Agent.Instance.myInputActions.Down.IsPressed)
             {
                 attack = false;
@@ -333,9 +341,7 @@ namespace SilksongNeuralNetwork
                 upAttack = false;
                 downAttack = true;
             }
-            
 
-           
             outputData.Add(BoolToFloat(attack));
             outputData.Add(BoolToFloat(downAttack));
             outputData.Add(BoolToFloat(upAttack));
