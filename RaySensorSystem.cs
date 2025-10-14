@@ -28,7 +28,7 @@ namespace SilksongNeuralNetwork
             // Layer 8 - Terrain (стіни, платформи)
             // Layer 9 - Default (різні об'єкти)
             // Можеш додати інші шари за потреби
-            _obstacleLayerMask = LayerMask.GetMask("Terrain", "Default");
+            _obstacleLayerMask = LayerMask.GetMask("Enemies", "Terrain", "Default");
 
             // Альтернативний спосіб - виключити тільки ігрові об'єкти
             // _obstacleLayerMask = ~(1 << 11); // Виключаємо шар ворогів

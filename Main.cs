@@ -177,6 +177,7 @@ namespace SilksongNeuralNetwork
         [HarmonyPatch(typeof(GameManager), "BeginScene")]
         public static void SceneLoadPostFix()
         {
+            
             // Тепер використовуємо sceneBoundsInstance, який буде ініціалізовано
             if (Instance.sceneBoundsInstance != null)
             {
@@ -188,15 +189,6 @@ namespace SilksongNeuralNetwork
                 Instance.Logger.LogInfo("SceneBounds instance is null after scene load.");
             }
             Instance.Logger.LogInfo("LOADED SCENE");
-        }
-        public void PrintUsedLayersInScene()
-        {
-            var allObjects = GameObject.FindObjectsOfType<GameObject>();
-            var usedLayers = new HashSet<int>(allObjects.Select(obj => obj.layer));
-            foreach (var layer in usedLayers)
-            {
-                Debug.Log($"Layer {layer}: {LayerMask.LayerToName(layer)}");
-            }
         }
 
         private void Update()
@@ -218,7 +210,7 @@ namespace SilksongNeuralNetwork
                     // DEBUG THING HAVE TO DELETE
                     hero.AddSilk(999, false);
 
-                    Logger.LogInfo(string.Join(", ", target.Skip(Math.Max(0, target.Length - 4))));
+                    
 
                     if (!_isTrainingMode)
                     {
@@ -256,6 +248,16 @@ namespace SilksongNeuralNetwork
                     if (Input.GetKeyDown(KeyCode.W))
                     {
                         _isTrainingMode = !_isTrainingMode;
+                    }
+
+                    if (Input.GetKeyDown(KeyCode.G))
+                    {
+                        var allObjects = GameObject.FindObjectsOfType<GameObject>();
+                        var usedLayers = new HashSet<int>(allObjects.Select(obj => obj.layer));
+                        foreach (var layer in usedLayers)
+                        {
+                            Logger.LogInfo($"Layer {layer}: {LayerMask.LayerToName(layer)}");
+                        }
                     }
                     
                     if (Input.GetKeyDown(KeyCode.E))
