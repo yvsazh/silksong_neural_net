@@ -31,10 +31,19 @@ namespace SilksongNeuralNetwork
         private List<LineRenderer> _enemyLineRenderers = new List<LineRenderer>();
         private bool _enemyLinesInitialized = false;
 
-        // Лінії для відображення променів-сенсорів
-        private List<LineRenderer> _raySensorRenderers = new List<LineRenderer>();
-        private List<GameObject> _raySensorCircles = new List<GameObject>();
-        private bool _raySensorsInitialized = false;
+        // Лінії для відображення променів-сенсорів (для перешкод)
+        private List<LineRenderer> _obstacleRaySensorRenderers = new List<LineRenderer>();
+        private List<GameObject> _obstacleRaySensorCircles = new List<GameObject>();
+        private bool _obstacleRaySensorsInitialized = false;
+
+        // Лінії для відображення променів-сенсорів (для ворогів)
+        private List<LineRenderer> _enemyRaySensorRenderers = new List<LineRenderer>();
+        private List<GameObject> _enemyRaySensorCircles = new List<GameObject>();
+        private bool _enemyRaySensorsInitialized = false;
+
+        private List<LineRenderer> _projectileRaySensorRenderers = new List<LineRenderer>();
+        private List<GameObject> _projectileRaySensorCircles = new List<GameObject>();
+        private bool _projectileRaySensorsInitialized = false;
 
         private void Awake()
         {
@@ -122,7 +131,7 @@ namespace SilksongNeuralNetwork
             }
         }
 
-        // ========== RAY SENSORS (новий функціонал) ==========
+        // ========== RAY SENSORS (універсальний метод) ==========
 
         private GameObject CreateCircle(string name, float radius, int segments = 16)
         {
@@ -155,9 +164,9 @@ namespace SilksongNeuralNetwork
             return circleObj;
         }
 
-        private void InitializeRaySensorPool(int count)
+        private void InitializeProjectileRaySensorPool(int count)
         {
-            if (_raySensorsInitialized) return;
+            if (_projectileRaySensorsInitialized) return;
 
             var material = new Material(Shader.Find("Hidden/Internal-Colored"));
             material.hideFlags = HideFlags.HideAndDontSave;
@@ -165,7 +174,7 @@ namespace SilksongNeuralNetwork
             for (int i = 0; i < count; i++)
             {
                 // Створюємо лінію променя
-                GameObject lineObject = new GameObject($"RaySensor_{i}");
+                GameObject lineObject = new GameObject($"ProjectileRaySensor_{i}");
                 DontDestroyOnLoad(lineObject);
                 LineRenderer lineRenderer = lineObject.AddComponent<LineRenderer>();
 
@@ -175,47 +184,146 @@ namespace SilksongNeuralNetwork
                 lineRenderer.positionCount = 2;
                 lineRenderer.sortingOrder = 9;
 
-                _raySensorRenderers.Add(lineRenderer);
+                _projectileRaySensorRenderers.Add(lineRenderer);
                 lineObject.SetActive(false);
 
                 // Створюємо кружечок для точки зіткнення
-                GameObject circle = CreateCircle($"RaySensorCircle_{i}", 0.08f);
-                _raySensorCircles.Add(circle);
+                GameObject circle = CreateCircle($"ProjectileRaySensorCircle_{i}", 0.07f);
+                _projectileRaySensorCircles.Add(circle);
             }
 
-            _raySensorsInitialized = true;
+            _projectileRaySensorsInitialized = true;
         }
 
-        public void DrawRaySensors(Vector2 origin, List<RaySensorData> sensors, float maxDistance)
+        private void InitializeObstacleRaySensorPool(int count)
+        {
+            if (_obstacleRaySensorsInitialized) return;
+
+            var material = new Material(Shader.Find("Hidden/Internal-Colored"));
+            material.hideFlags = HideFlags.HideAndDontSave;
+
+            for (int i = 0; i < count; i++)
+            {
+                // Створюємо лінію променя
+                GameObject lineObject = new GameObject($"ObstacleRaySensor_{i}");
+                DontDestroyOnLoad(lineObject);
+                LineRenderer lineRenderer = lineObject.AddComponent<LineRenderer>();
+
+                lineRenderer.material = material;
+                lineRenderer.startWidth = 0.03f;
+                lineRenderer.endWidth = 0.01f;
+                lineRenderer.positionCount = 2;
+                lineRenderer.sortingOrder = 9;
+
+                _obstacleRaySensorRenderers.Add(lineRenderer);
+                lineObject.SetActive(false);
+
+                // Створюємо кружечок для точки зіткнення
+                GameObject circle = CreateCircle($"ObstacleRaySensorCircle_{i}", 0.08f);
+                _obstacleRaySensorCircles.Add(circle);
+            }
+
+            _obstacleRaySensorsInitialized = true;
+        }
+
+        private void InitializeEnemyRaySensorPool(int count)
+        {
+            if (_enemyRaySensorsInitialized) return;
+
+            var material = new Material(Shader.Find("Hidden/Internal-Colored"));
+            material.hideFlags = HideFlags.HideAndDontSave;
+
+            for (int i = 0; i < count; i++)
+            {
+                // Створюємо лінію променя
+                GameObject lineObject = new GameObject($"EnemyRaySensor_{i}");
+                DontDestroyOnLoad(lineObject);
+                LineRenderer lineRenderer = lineObject.AddComponent<LineRenderer>();
+
+                lineRenderer.material = material;
+                lineRenderer.startWidth = 0.03f;
+                lineRenderer.endWidth = 0.01f;
+                lineRenderer.positionCount = 2;
+                lineRenderer.sortingOrder = 9;
+
+                _enemyRaySensorRenderers.Add(lineRenderer);
+                lineObject.SetActive(false);
+
+                // Створюємо кружечок для точки зіткнення
+                GameObject circle = CreateCircle($"EnemyRaySensorCircle_{i}", 0.1f);
+                _enemyRaySensorCircles.Add(circle);
+            }
+
+            _enemyRaySensorsInitialized = true;
+        }
+
+        public void DrawRaySensors(Vector2 origin, List<RaySensorData> sensors, float maxDistance, RaySensorType sensorType)
         {
             if (!Visible)
             {
-                HideRaySensors();
+                HideRaySensors(sensorType);
                 return;
             }
 
-            if (!_raySensorsInitialized || _raySensorRenderers.Count < sensors.Count)
+            // Вибираємо правильні списки залежно від типу сенсора
+            List<LineRenderer> renderers;
+            List<GameObject> circles;
+            Color primaryColor, secondaryColor;
+
+            if (sensorType == RaySensorType.Obstacles)
             {
-                InitializeRaySensorPool(sensors.Count);
+                if (!_obstacleRaySensorsInitialized || _obstacleRaySensorRenderers.Count < sensors.Count)
+                {
+                    InitializeObstacleRaySensorPool(sensors.Count);
+                }
+                renderers = _obstacleRaySensorRenderers;
+                circles = _obstacleRaySensorCircles;
+
+                // Фіолетовий колір для перешкод
+                primaryColor = new Color(0.6f, 0.2f, 0.8f, 0.9f);
+                secondaryColor = new Color(0.6f, 0.2f, 0.8f, 0.3f);
+            }
+            else if (sensorType == RaySensorType.Enemies)
+            {
+                if (!_enemyRaySensorsInitialized || _enemyRaySensorRenderers.Count < sensors.Count)
+                {
+                    InitializeEnemyRaySensorPool(sensors.Count);
+                }
+                renderers = _enemyRaySensorRenderers;
+                circles = _enemyRaySensorCircles;
+
+                // Синій колір для ворогів
+                primaryColor = new Color(0.2f, 0.5f, 1f, 0.9f);
+                secondaryColor = new Color(0.2f, 0.5f, 1f, 0.3f);
+            }
+            else // RaySensorType.EnemiesProjectiles
+            {
+                if (!_enemyRaySensorsInitialized || _enemyRaySensorRenderers.Count < sensors.Count)
+                {
+                    InitializeProjectileRaySensorPool(sensors.Count);
+                }
+                renderers = _enemyRaySensorRenderers;
+                circles = _enemyRaySensorCircles;
+
+                // Яскраво-жовтий колір для снарядів
+                primaryColor = new Color(1f, 1f, 0f, 0.9f);
+                secondaryColor = new Color(1f, 1f, 0f, 0.3f);
             }
 
-            for (int i = 0; i < _raySensorRenderers.Count; i++)
+
+            for (int i = 0; i < renderers.Count; i++)
             {
                 if (i < sensors.Count)
                 {
-                    LineRenderer line = _raySensorRenderers[i];
-                    GameObject circle = _raySensorCircles[i];
+                    LineRenderer line = renderers[i];
+                    GameObject circle = circles[i];
                     RaySensorData sensor = sensors[i];
 
                     if (!line.gameObject.activeSelf)
                         line.gameObject.SetActive(true);
 
-                    // Фіолетовий колір для променів
-                    Color purpleColor = new Color(0.6f, 0.2f, 0.8f, 0.9f); // Насичений фіолетовий
-                    Color purpleColorEnd = new Color(0.6f, 0.2f, 0.8f, 0.3f); // Прозорий фіолетовий
-
-                    line.startColor = purpleColor;
-                    line.endColor = purpleColorEnd;
+                    line.startColor = primaryColor;
+                    line.endColor = secondaryColor;
 
                     // Малюємо лінію
                     line.SetPosition(0, origin);
@@ -232,11 +340,27 @@ namespace SilksongNeuralNetwork
                         // Колір кружечка залежить від відстані
                         LineRenderer circleLR = circle.GetComponent<LineRenderer>();
                         float t = sensor.normalizedDistance;
-                        Color circleColor = Color.Lerp(
-                            new Color(1f, 1f, 0f, 1f),   // Жовтий (далеко)
-                            new Color(1f, 0f, 0f, 1f),   // Червоний (близько)
-                            t
-                        );
+                        Color circleColor;
+
+                        if (sensorType == RaySensorType.Obstacles)
+                        {
+                            // Для перешкод: жовтий -> червоний
+                            circleColor = Color.Lerp(
+                                new Color(1f, 1f, 0f, 1f),   // Жовтий (далеко)
+                                new Color(1f, 0f, 0f, 1f),   // Червоний (близько)
+                                t
+                            );
+                        }
+                        else
+                        {
+                            // Для ворогів: блакитний -> темно-синій
+                            circleColor = Color.Lerp(
+                                new Color(0.5f, 0.8f, 1f, 1f),   // Світло-блакитний (далеко)
+                                new Color(0f, 0f, 0.8f, 1f),     // Темно-синій (близько)
+                                t
+                            );
+                        }
+
                         circleLR.startColor = circleColor;
                         circleLR.endColor = circleColor;
                     }
@@ -248,19 +372,36 @@ namespace SilksongNeuralNetwork
                 }
                 else
                 {
-                    if (_raySensorRenderers[i].gameObject.activeSelf)
-                        _raySensorRenderers[i].gameObject.SetActive(false);
-                    if (_raySensorCircles[i].activeSelf)
-                        _raySensorCircles[i].SetActive(false);
+                    if (renderers[i].gameObject.activeSelf)
+                        renderers[i].gameObject.SetActive(false);
+                    if (circles[i].activeSelf)
+                        circles[i].SetActive(false);
                 }
             }
         }
 
-        private void HideRaySensors()
+        private void HideRaySensors(RaySensorType sensorType)
         {
-            if (!_raySensorsInitialized) return;
+            List<LineRenderer> renderers;
+            List<GameObject> circles;
+            bool initialized;
 
-            foreach (var line in _raySensorRenderers)
+            if (sensorType == RaySensorType.Obstacles)
+            {
+                renderers = _obstacleRaySensorRenderers;
+                circles = _obstacleRaySensorCircles;
+                initialized = _obstacleRaySensorsInitialized;
+            }
+            else
+            {
+                renderers = _enemyRaySensorRenderers;
+                circles = _enemyRaySensorCircles;
+                initialized = _enemyRaySensorsInitialized;
+            }
+
+            if (!initialized) return;
+
+            foreach (var line in renderers)
             {
                 if (line != null && line.gameObject.activeSelf)
                 {
@@ -268,7 +409,7 @@ namespace SilksongNeuralNetwork
                 }
             }
 
-            foreach (var circle in _raySensorCircles)
+            foreach (var circle in circles)
             {
                 if (circle != null && circle.activeSelf)
                 {
@@ -282,7 +423,8 @@ namespace SilksongNeuralNetwork
         public void HideAllLines()
         {
             HideEnemyLines();
-            HideRaySensors();
+            HideRaySensors(RaySensorType.Obstacles);
+            HideRaySensors(RaySensorType.Enemies);
         }
     }
 }

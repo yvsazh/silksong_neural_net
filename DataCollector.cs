@@ -18,8 +18,13 @@ namespace SilksongNeuralNetwork
         // Ініціалізація системи променів (викликати один раз на початку)
         static DataCollector()
         {
-            // Можеш налаштувати кількість променів і максимальну відстань
-            RaySensorSystem.Initialize(rayCount: 16, maxDistance: 20f);
+            // Налаштовуємо обидві системи променів
+            RaySensorSystem.Initialize(
+                obstacleRayCount: 16,      // Промені для карти
+                obstacleMaxDistance: 20f,
+                enemyRayCount: 12,          // Промені для ворогів
+                enemyMaxDistance: 25f
+            );
         }
 
         private static List<float> GetEnemyData(HeroController hero, int enemyCount = 5)
@@ -52,29 +57,42 @@ namespace SilksongNeuralNetwork
             {
                 if (i < sortedEnemies.Count)
                 {
-                    Transform enemy = sortedEnemies[i].enemyTransform;
-                    Vector2 relativePosition = enemy.position - hero.transform.position;
+                    // Transform enemy = sortedEnemies[i].enemyTransform;
+                    // Vector2 relativePosition = enemy.position - hero.transform.position;
 
-                    enemyData.Add(Normalize(relativePosition.x, searchRadius));
-                    enemyData.Add(Normalize(relativePosition.y, searchRadius));
+                    // enemyData.Add(Normalize(relativePosition.x, searchRadius));
+                    // enemyData.Add(Normalize(relativePosition.y, searchRadius));
                     enemyData.Add(Normalize(sortedEnemies[i].distance, searchRadius));
                 }
                 else
                 {
-                    enemyData.Add(0f);
-                    enemyData.Add(0f);
-                    enemyData.Add(0f);
+                    // enemyData.Add(1f);
+                    // enemyData.Add(1f);
+                    enemyData.Add(1f);
                 }
             }
 
             return enemyData;
         }
 
-        // Новий метод для отримання даних з променів-сенсорів
-        private static List<float> GetRaySensorData(HeroController hero)
+        // Отримання даних з променів для перешкод (карти)
+        private static List<float> GetObstacleRaySensorData(HeroController hero)
         {
             Vector2 heroPosition = hero.transform.position;
-            return RaySensorSystem.GetRaySensorFloatData(heroPosition);
+            return RaySensorSystem.GetObstacleRaySensorFloatData(heroPosition);
+        }
+
+        // Отримання даних з променів для ворогів
+        private static List<float> GetEnemyRaySensorData(HeroController hero)
+        {
+            Vector2 heroPosition = hero.transform.position;
+            return RaySensorSystem.GetEnemyRaySensorFloatData(heroPosition);
+        }
+
+        private static List<float> GetEnemyProjectilesRaySensorData(HeroController hero)
+        {
+            Vector2 heroPosition = hero.transform.position;
+            return RaySensorSystem.GetEnemyProjectilesRaySensorFloatData(heroPosition);
         }
 
         public static List<float> GetInputData()
@@ -93,8 +111,8 @@ namespace SilksongNeuralNetwork
                 hornetState.Add(Normalize(PlayerData.instance.health, PlayerData.instance.maxHealth));
                 hornetState.Add(Normalize(PlayerData.instance.silk, PlayerData.instance.silkMax));
                 // ----  coords x and y ---- 
-                hornetState.Add(Normalize(hero.transform.position.x, 1000)); // should try to find max dynamicly
-                hornetState.Add(Normalize(hero.transform.position.y, 1000)); // should try to find max dynamicly
+                hornetState.Add(Normalize(hero.transform.position.x, 1000));
+                hornetState.Add(Normalize(hero.transform.position.y, 1000));
 
                 // ---- velocity ---- 
                 hornetState.Add(Normalize(hero.Body.linearVelocity.x, hero.GetRunSpeed()));
@@ -224,17 +242,24 @@ namespace SilksongNeuralNetwork
                 globalActions.Add(BoolToFloat(PlayerData.instance.hasHarpoonDash));
             }
 
-            // ENEMY DATA
+            // ENEMY DATA (closest enemies)
             List<float> enemyData = GetEnemyData(hero);
 
-            // RAY SENSOR DATA (NEW!)
-            List<float> raySensorData = GetRaySensorData(hero);
+            // RAY SENSOR DATA FOR OBSTACLES (карта/перешкоди)
+            List<float> obstacleRaySensorData = GetObstacleRaySensorData(hero);
 
-            // MERGE
+            // RAY SENSOR DATA FOR ENEMIES (промені по ворогах)
+            List<float> enemyRaySensorData = GetEnemyRaySensorData(hero);
+
+            List<float> enemyProjectilesRaySensorData = GetEnemyProjectilesRaySensorData(hero); 
+
+            // MERGE ALL DATA
             inputData.AddRange(hornetState);
             inputData.AddRange(globalActions);
             inputData.AddRange(enemyData);
-            inputData.AddRange(raySensorData); // Додаємо дані з променів
+            inputData.AddRange(obstacleRaySensorData);
+            inputData.AddRange(enemyRaySensorData);     
+            inputData.AddRange(enemyProjectilesRaySensorData);
 
             return inputData;
         }
@@ -243,7 +268,6 @@ namespace SilksongNeuralNetwork
         {
             List<float> outputData = new List<float>();
 
-            // standart
             bool jump = false;
             bool bigJump = false;
             bool doubleJump = false;
@@ -341,7 +365,7 @@ namespace SilksongNeuralNetwork
             FieldInfo field = type.GetField("skillEventTarget", BindingFlags.NonPublic | BindingFlags.Instance);
             PlayMakerFSM fsm = (PlayMakerFSM)field.GetValue(Agent.Instance.hero);
 
-            outputData.Add(BoolToFloat(fsm.ActiveStateName == "A Sphere Antic" || fsm.ActiveStateName == "A Sphere" || fsm.ActiveStateName == "A Sphere Recover")); // MAIN ABILITY
+            outputData.Add(BoolToFloat(fsm.ActiveStateName == "A Sphere Antic" || fsm.ActiveStateName == "A Sphere" || fsm.ActiveStateName == "A Sphere Recover"));
             outputData.Add(BoolToFloat(usedFirstTool));
             outputData.Add(BoolToFloat(usedSecondTool));
 

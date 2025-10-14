@@ -210,7 +210,7 @@ namespace SilksongNeuralNetwork
                     // DEBUG THING HAVE TO DELETE
                     hero.AddSilk(999, false);
 
-                    
+                    // Logger.LogInfo(string.Join(" ", input.Skip(Math.Max(0, input.Length - 20))));
 
                     if (!_isTrainingMode)
                     {
@@ -257,6 +257,16 @@ namespace SilksongNeuralNetwork
                         foreach (var layer in usedLayers)
                         {
                             Logger.LogInfo($"Layer {layer}: {LayerMask.LayerToName(layer)}");
+                        }
+                    }
+
+                    if (Input.GetKeyDown(KeyCode.L))
+                    {
+                        for (int i = 0; i < 32; i++)
+                        {
+                            string layerName = LayerMask.LayerToName(i);
+                            if (!string.IsNullOrEmpty(layerName))
+                                Logger.LogInfo($"Layer {i}: {layerName}");
                         }
                     }
                     

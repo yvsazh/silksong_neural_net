@@ -6,48 +6,77 @@ namespace SilksongNeuralNetwork
     public class RaySensorData
     {
         public Vector2 direction;
-        public float normalizedDistance; // 0 = max distance, 1 = hit close
+        public float normalizedDistance; // 1 = max distance, 0 = hit close
         public bool hitDetected;
         public Vector2 hitPoint;
+        public string targetTag; // Додатково: можна зберігати тег об'єкта
+    }
+
+    public enum RaySensorType
+    {
+        Obstacles,  // Для карти/перешкод
+        Enemies,     // Для ворогів
+        EnemiesProjectiles,     
     }
 
     public static class RaySensorSystem
     {
-        private static int _rayCount = 16;
-        private static float _maxRayDistance = 20f;
+        // Налаштування для променів перешкод
+        private static int _obstacleRayCount = 16;
+        private static float _obstacleMaxDistance = 20f;
         private static LayerMask _obstacleLayerMask;
+
+        // Налаштування для променів ворогів
+        private static int _enemyRayCount = 12;
+        private static float _enemyMaxDistance = 20f;
+        private static LayerMask _enemyLayerMask;
+
+        // Налаштування для снарядів
+        private static int _enemyProjectilesRayCount = 20;
+        private static float _enemyProjectilesMaxDistance = 20f;
+        private static LayerMask _enemyProjectilesLayerMask;
+
         private static bool _initialized = false;
 
         // Ініціалізація системи променів
-        public static void Initialize(int rayCount = 16, float maxDistance = 20f)
+        public static void Initialize(
+            int obstacleRayCount = 16,
+            float obstacleMaxDistance = 20f,
+            int enemyRayCount = 12,
+            float enemyMaxDistance = 20f,
+            int enemyProjectilesRayCount = 20,
+            float enemyProjectilesMaxDistance = 20f
+            )
         {
-            _rayCount = rayCount;
-            _maxRayDistance = maxDistance;
+            // Налаштування променів для перешкод
+            _obstacleRayCount = obstacleRayCount;
+            _obstacleMaxDistance = obstacleMaxDistance;
+            _obstacleLayerMask = LayerMask.GetMask("Soft Terrain", "Terrain", "Default");
 
-            // Створюємо LayerMask для всіх твердих об'єктів
-            // Layer 8 - Terrain (стіни, платформи)
-            // Layer 9 - Default (різні об'єкти)
-            // Можеш додати інші шари за потреби
-            _obstacleLayerMask = LayerMask.GetMask("Enemies", "Terrain", "Default");
+            // Налаштування променів для ворогів
+            _enemyRayCount = enemyRayCount;
+            _enemyMaxDistance = enemyMaxDistance;
+            _enemyLayerMask = LayerMask.GetMask("Enemies");
 
-            // Альтернативний спосіб - виключити тільки ігрові об'єкти
-            // _obstacleLayerMask = ~(1 << 11); // Виключаємо шар ворогів
+            _enemyProjectilesRayCount = enemyProjectilesRayCount;
+            _enemyProjectilesMaxDistance = enemyProjectilesMaxDistance;
+            _enemyProjectilesLayerMask = LayerMask.GetMask("Attack");
 
             _initialized = true;
         }
 
-        // Отримання даних з усіх променів
-        public static List<RaySensorData> CastRays(Vector2 origin)
+        // Універсальний метод для кастування променів
+        private static List<RaySensorData> CastRaysInternal(
+            Vector2 origin,
+            int rayCount,
+            float maxDistance,
+            LayerMask layerMask,
+            RaySensorType sensorType)
         {
-            if (!_initialized)
-            {
-                Initialize();
-            }
-
             List<RaySensorData> sensorData = new List<RaySensorData>();
-            float angleStep = 360f / _rayCount;
+            float angleStep = 360f / rayCount;
 
-            for (int i = 0; i < _rayCount; i++)
+            for (int i = 0; i < rayCount; i++)
             {
                 float angle = i * angleStep;
                 Vector2 direction = GetDirectionFromAngle(angle);
@@ -55,8 +84,8 @@ namespace SilksongNeuralNetwork
                 RaycastHit2D hit = Physics2D.Raycast(
                     origin,
                     direction,
-                    _maxRayDistance,
-                    _obstacleLayerMask
+                    maxDistance,
+                    layerMask
                 );
 
                 RaySensorData data = new RaySensorData
@@ -67,15 +96,15 @@ namespace SilksongNeuralNetwork
 
                 if (hit.collider != null)
                 {
-                    // Якщо є зіткнення - нормалізуємо відстань (0 = далеко, 1 = близько)
-                    data.normalizedDistance = 1f - (hit.distance / _maxRayDistance);
+                    data.normalizedDistance = hit.distance / maxDistance;
                     data.hitPoint = hit.point;
+                    data.targetTag = hit.collider.tag;
                 }
                 else
                 {
-                    // Якщо нема зіткнення - відстань 0 (далеко/нічого нема)
-                    data.normalizedDistance = 0f;
-                    data.hitPoint = origin + direction * _maxRayDistance;
+
+                    data.normalizedDistance = 1f;
+                    data.hitPoint = origin + direction * maxDistance;
                 }
 
                 sensorData.Add(data);
@@ -84,27 +113,99 @@ namespace SilksongNeuralNetwork
             // Відмальовуємо промені для дебагу
             if (DebugTools.Instance != null)
             {
-                DebugTools.Instance.DrawRaySensors(origin, sensorData, _maxRayDistance);
+                DebugTools.Instance.DrawRaySensors(origin, sensorData, maxDistance, sensorType);
             }
 
             return sensorData;
         }
 
-        // Отримання даних у вигляді списку float для нейромережі
-        public static List<float> GetRaySensorFloatData(Vector2 origin)
+        // Отримання даних з променів для перешкод
+        public static List<RaySensorData> CastObstacleRays(Vector2 origin)
         {
-            List<RaySensorData> sensors = CastRays(origin);
+            if (!_initialized)
+            {
+                Initialize();
+            }
+
+            return CastRaysInternal(origin, _obstacleRayCount, _obstacleMaxDistance, _obstacleLayerMask, RaySensorType.Obstacles);
+        }
+
+        // Отримання даних з променів для ворогів
+        public static List<RaySensorData> CastEnemyRays(Vector2 origin)
+        {
+            if (!_initialized)
+            {
+                Initialize();
+            }
+
+            return CastRaysInternal(origin, _enemyRayCount, _enemyMaxDistance, _enemyLayerMask, RaySensorType.Enemies);
+        }
+
+        public static List<RaySensorData> CastEnemyProjectilesRays(Vector2 origin)
+        {
+            if (!_initialized)
+            {
+                Initialize();
+            }
+
+            return CastRaysInternal(origin, _enemyProjectilesRayCount, _enemyProjectilesMaxDistance, _enemyProjectilesLayerMask, RaySensorType.EnemiesProjectiles);
+        }
+
+        // Отримання даних у вигляді списку float для нейромережі (перешкоди)
+        public static List<float> GetObstacleRaySensorFloatData(Vector2 origin)
+        {
+            List<RaySensorData> sensors = CastObstacleRays(origin);
             List<float> floatData = new List<float>();
 
             foreach (var sensor in sensors)
             {
                 floatData.Add(sensor.normalizedDistance);
-                // Опціонально можеш додати також напрямок променя:
-                // floatData.Add(sensor.direction.x);
-                // floatData.Add(sensor.direction.y);
             }
 
             return floatData;
+        }
+
+        // Отримання даних у вигляді списку float для нейромережі (вороги)
+        public static List<float> GetEnemyRaySensorFloatData(Vector2 origin)
+        {
+            List<RaySensorData> sensors = CastEnemyRays(origin);
+            List<float> floatData = new List<float>();
+
+            foreach (var sensor in sensors)
+            {
+                floatData.Add(sensor.normalizedDistance);
+            }
+
+            return floatData;
+        }
+
+        public static List<float> GetEnemyProjectilesRaySensorFloatData(Vector2 origin)
+        {
+            List<RaySensorData> sensors = CastEnemyProjectilesRays(origin);
+            List<float> floatData = new List<float>();
+
+            foreach (var sensor in sensors)
+            {
+                floatData.Add(sensor.normalizedDistance);
+            }
+
+            return floatData;
+        }
+
+        // Отримання ВСІХ даних з обох систем променів
+        public static List<float> GetAllRaySensorFloatData(Vector2 origin)
+        {
+            List<float> allData = new List<float>();
+
+            // Спочатку дані про перешкоди
+            allData.AddRange(GetObstacleRaySensorFloatData(origin));
+
+            // Потім дані про ворогів
+            allData.AddRange(GetEnemyRaySensorFloatData(origin));
+
+            allData.AddRange(GetEnemyProjectilesRaySensorFloatData(origin));
+
+            return allData;
         }
 
         // Допоміжний метод для отримання напрямку з кута
@@ -114,15 +215,36 @@ namespace SilksongNeuralNetwork
             return new Vector2(Mathf.Cos(angleRadians), Mathf.Sin(angleRadians));
         }
 
-        // Налаштування параметрів
-        public static void SetRayCount(int count)
+        // Налаштування параметрів для перешкод
+        public static void SetObstacleRayCount(int count)
         {
-            _rayCount = Mathf.Max(4, count); // Мінімум 4 промені
+            _obstacleRayCount = Mathf.Max(4, count);
         }
 
-        public static void SetMaxDistance(float distance)
+        public static void SetObstacleMaxDistance(float distance)
         {
-            _maxRayDistance = Mathf.Max(1f, distance);
+            _obstacleMaxDistance = Mathf.Max(1f, distance);
+        }
+
+        // Налаштування параметрів для ворогів
+        public static void SetEnemyRayCount(int count)
+        {
+            _enemyRayCount = Mathf.Max(4, count);
+        }
+
+        public static void SetEnemyMaxDistance(float distance)
+        {
+            _enemyMaxDistance = Mathf.Max(1f, distance);
+        }
+
+        public static void SetEnemyProjectilesRayCount(int count)
+        {
+            _enemyProjectilesRayCount = Mathf.Max(4, count);
+        }
+
+        public static void SetEnemyProjectilesMaxDistance(float distance)
+        {
+            _enemyProjectilesMaxDistance = Mathf.Max(1f, distance);
         }
 
         public static void SetObstacleLayerMask(LayerMask mask)
@@ -130,7 +252,22 @@ namespace SilksongNeuralNetwork
             _obstacleLayerMask = mask;
         }
 
-        public static int GetRayCount() => _rayCount;
-        public static float GetMaxDistance() => _maxRayDistance;
+        public static void SetEnemyLayerMask(LayerMask mask)
+        {
+            _enemyLayerMask = mask;
+        }
+
+        public static void SetEnemyProjectilesLayerMask(LayerMask mask)
+        {
+            _enemyLayerMask = mask;
+        }
+
+        // Getters
+        public static int GetObstacleRayCount() => _obstacleRayCount;
+        public static float GetObstacleMaxDistance() => _obstacleMaxDistance;
+        public static int GetEnemyRayCount() => _enemyRayCount;
+        public static float GetEnemyMaxDistance() => _enemyMaxDistance;
+        public static int GetEnemyProjectilesRayCount() => _enemyRayCount;
+        public static float GetEnemyProjectilesMaxDistance() => _enemyMaxDistance;
     }
 }
