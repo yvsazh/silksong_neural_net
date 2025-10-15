@@ -221,13 +221,13 @@ namespace SilksongNeuralNetwork
 
                             // Навчаємось на батчах (метод сам контролює частоту навчання)
                             double error = _nn.TrainBatch();
-                        }
 
-                        // Логуємо статистику кожні 100 кадрів
-                        if (Time.frameCount % 100 == 0)
-                        {
-                            Logger.LogInfo($"[NeuralNet] {_nn.GetStats()}");
-                            Logger.LogInfo($"[NeuralNet] Prediction: {string.Join(",", predictedActions)} | Real Action: {string.Join(",", target)}");
+                            // Логуємо статистику кожні 100 кадрів
+                            if (Time.frameCount % 100 == 0)
+                            {
+                                Logger.LogInfo($"[NeuralNet] {_nn.GetStats()}");
+                                Logger.LogInfo($"[NeuralNet] Prediction: {string.Join(",", predictedActions)} | Real Action: {string.Join(",", target)}");
+                            }
                         }
                     }
                     else
@@ -287,12 +287,16 @@ namespace SilksongNeuralNetwork
 
                     if (Input.GetKeyDown(KeyCode.L))
                     {
+                        /*
                         for (int i = 0; i < 32; i++)
                         {
                             string layerName = LayerMask.LayerToName(i);
                             if (!string.IsNullOrEmpty(layerName))
                                 Logger.LogInfo($"Layer {i}: {layerName}");
                         }
+                        */
+                        var answerId = 3;
+                        GameAction.GetById(answerId + 1).Execute();
                     }
 
 
