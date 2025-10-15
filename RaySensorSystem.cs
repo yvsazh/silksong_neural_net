@@ -259,7 +259,7 @@ namespace SilksongNeuralNetwork
 
         public static void SetEnemyProjectilesLayerMask(LayerMask mask)
         {
-            _enemyLayerMask = mask;
+            _enemyProjectilesLayerMask = mask;
         }
 
         // Getters
@@ -267,7 +267,7 @@ namespace SilksongNeuralNetwork
         public static float GetObstacleMaxDistance() => _obstacleMaxDistance;
         public static int GetEnemyRayCount() => _enemyRayCount;
         public static float GetEnemyMaxDistance() => _enemyMaxDistance;
-        public static int GetEnemyProjectilesRayCount() => _enemyRayCount;
-        public static float GetEnemyProjectilesMaxDistance() => _enemyMaxDistance;
+        public static int GetEnemyProjectilesRayCount() => _enemyProjectilesRayCount;
+        public static float GetEnemyProjectilesMaxDistance() => _enemyProjectilesMaxDistance;
     }
 }

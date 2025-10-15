@@ -298,12 +298,12 @@ namespace SilksongNeuralNetwork
             }
             else // RaySensorType.EnemiesProjectiles
             {
-                if (!_enemyRaySensorsInitialized || _enemyRaySensorRenderers.Count < sensors.Count)
+                if (!_projectileRaySensorsInitialized || _projectileRaySensorRenderers.Count < sensors.Count)
                 {
                     InitializeProjectileRaySensorPool(sensors.Count);
                 }
-                renderers = _enemyRaySensorRenderers;
-                circles = _enemyRaySensorCircles;
+                renderers = _projectileRaySensorRenderers;  // ✅ ВИПРАВЛЕНО
+                circles = _projectileRaySensorCircles;      // ✅ ВИПРАВЛЕНО
 
                 // Яскраво-жовтий колір для снарядів
                 primaryColor = new Color(1f, 1f, 0f, 0.9f);
@@ -344,20 +344,29 @@ namespace SilksongNeuralNetwork
 
                         if (sensorType == RaySensorType.Obstacles)
                         {
-                            // Для перешкод: жовтий -> червоний
+                            // Жовтий -> червоний
                             circleColor = Color.Lerp(
-                                new Color(1f, 1f, 0f, 1f),   // Жовтий (далеко)
-                                new Color(1f, 0f, 0f, 1f),   // Червоний (близько)
+                                new Color(1f, 1f, 0f, 1f),
+                                new Color(1f, 0f, 0f, 1f),
                                 t
                             );
                         }
-                        else
+                        else if (sensorType == RaySensorType.Enemies)  // ✅ Додайте else if
                         {
-                            // Для ворогів: блакитний -> темно-синій
+                            // Блакитний -> темно-синій
                             circleColor = Color.Lerp(
-                                new Color(0.5f, 0.8f, 1f, 1f),   // Світло-блакитний (далеко)
-                                new Color(0f, 0f, 0.8f, 1f),     // Темно-синій (близько)
+                                new Color(0.5f, 0.8f, 1f, 1f),
+                                new Color(0f, 0f, 0.8f, 1f),
                                 t
+                            );
+                        }
+                        else // EnemiesProjectiles  // ✅ Додайте else для снарядів
+                        {
+                            // Помаранчевий -> червоний для снарядів
+                            circleColor = Color.Lerp(
+                                new Color(1f, 0.8f, 0f, 1f),   // Помаранчевий (далеко)
+                                new Color(1f, 0f, 0f, 1f),     // Червоний (близько)
+                                1f - t
                             );
                         }
 
@@ -392,11 +401,17 @@ namespace SilksongNeuralNetwork
                 circles = _obstacleRaySensorCircles;
                 initialized = _obstacleRaySensorsInitialized;
             }
-            else
+            else if (sensorType == RaySensorType.Enemies)
             {
                 renderers = _enemyRaySensorRenderers;
                 circles = _enemyRaySensorCircles;
                 initialized = _enemyRaySensorsInitialized;
+            }
+            else // RaySensorType.EnemiesProjectiles
+            {
+                renderers = _projectileRaySensorRenderers;
+                circles = _projectileRaySensorCircles;
+                initialized = _projectileRaySensorsInitialized;
             }
 
             if (!initialized) return;
@@ -425,6 +440,7 @@ namespace SilksongNeuralNetwork
             HideEnemyLines();
             HideRaySensors(RaySensorType.Obstacles);
             HideRaySensors(RaySensorType.Enemies);
+            HideRaySensors(RaySensorType.EnemiesProjectiles);
         }
     }
 }

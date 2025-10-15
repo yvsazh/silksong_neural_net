@@ -20,10 +20,12 @@ namespace SilksongNeuralNetwork
         {
             // Налаштовуємо обидві системи променів
             RaySensorSystem.Initialize(
-                obstacleRayCount: 16,      // Промені для карти
-                obstacleMaxDistance: 20f,
-                enemyRayCount: 12,          // Промені для ворогів
-                enemyMaxDistance: 25f
+                obstacleRayCount: 8,
+                obstacleMaxDistance: 12f,
+                enemyRayCount: 6,
+                enemyMaxDistance: 25f,
+                enemyProjectilesRayCount: 12,
+                enemyProjectilesMaxDistance: 12f
             );
         }
 
@@ -57,17 +59,10 @@ namespace SilksongNeuralNetwork
             {
                 if (i < sortedEnemies.Count)
                 {
-                    // Transform enemy = sortedEnemies[i].enemyTransform;
-                    // Vector2 relativePosition = enemy.position - hero.transform.position;
-
-                    // enemyData.Add(Normalize(relativePosition.x, searchRadius));
-                    // enemyData.Add(Normalize(relativePosition.y, searchRadius));
                     enemyData.Add(Normalize(sortedEnemies[i].distance, searchRadius));
                 }
                 else
                 {
-                    // enemyData.Add(1f);
-                    // enemyData.Add(1f);
                     enemyData.Add(1f);
                 }
             }
@@ -103,116 +98,65 @@ namespace SilksongNeuralNetwork
             List<float> globalActions = new List<float>();
 
             HeroController hero = Agent.Instance.hero;
-            var heroType = hero.GetType();
 
-            if (PlayerData.instance != null)
+            if (PlayerData.instance != null && hero != null)
             {
-                // ---- Basics ---- 
+                // ==== БАЗОВІ ПАРАМЕТРИ (4 значення) ====
                 hornetState.Add(Normalize(PlayerData.instance.health, PlayerData.instance.maxHealth));
                 hornetState.Add(Normalize(PlayerData.instance.silk, PlayerData.instance.silkMax));
-                // ----  coords x and y ---- 
-                hornetState.Add(Normalize(hero.transform.position.x, 1000));
-                hornetState.Add(Normalize(hero.transform.position.y, 1000));
 
-                // ---- velocity ---- 
+                // Швидкість (більш інформативна ніж координати)
                 hornetState.Add(Normalize(hero.Body.linearVelocity.x, hero.GetRunSpeed()));
                 hornetState.Add(Normalize(hero.Body.linearVelocity.y, hero.JUMP_SPEED));
 
-                // ---- STATES ---- 
+                // ==== КЛЮЧОВІ СТАНИ РУХУ (8 значень) ====
                 hornetState.Add(BoolToFloat(hero.cState.facingRight));
                 hornetState.Add(BoolToFloat(hero.cState.onGround));
-                hornetState.Add(BoolToFloat(hero.cState.jumping));
-                hornetState.Add(BoolToFloat(hero.cState.shuttleCock));
-                hornetState.Add(BoolToFloat(hero.cState.floating));
-                hornetState.Add(BoolToFloat(hero.umbrellaFSM.ActiveStateName == "Float Idle"));
-                hornetState.Add(BoolToFloat(hero.cState.wallJumping));
-                hornetState.Add(BoolToFloat(hero.cState.doubleJumping));
-                hornetState.Add(BoolToFloat(hero.cState.nailCharging));
-                hornetState.Add(BoolToFloat(hero.cState.shadowDashing));
-                hornetState.Add(BoolToFloat(hero.cState.swimming));
                 hornetState.Add(BoolToFloat(hero.cState.falling));
-                hornetState.Add(BoolToFloat(hero.cState.dashing));
-                hornetState.Add(BoolToFloat(hero.cState.isSprinting));
-                hornetState.Add(BoolToFloat(hero.cState.isBackSprinting));
-                hornetState.Add(BoolToFloat(hero.cState.isBackScuttling));
-                hornetState.Add(BoolToFloat(hero.cState.airDashing));
-                hornetState.Add(BoolToFloat(hero.cState.superDashing));
-                hornetState.Add(BoolToFloat(hero.cState.superDashOnWall));
-                hornetState.Add(BoolToFloat(hero.cState.backDashing));
                 hornetState.Add(BoolToFloat(hero.cState.touchingWall));
                 hornetState.Add(BoolToFloat(hero.cState.wallSliding));
                 hornetState.Add(BoolToFloat(hero.cState.wallClinging));
-                hornetState.Add(BoolToFloat(hero.cState.wallScrambling));
-                hornetState.Add(BoolToFloat(hero.cState.transitioning));
+                hornetState.Add(BoolToFloat(hero.cState.swimming));
+                hornetState.Add(BoolToFloat(hero.cState.floating));
+
+                // ==== КЛЮЧОВІ СТАНИ ДАШІВ (4 значення) ====
+                // Об'єднуємо всі види дашів для спрощення
+                bool isAnyDashing = hero.cState.dashing || hero.cState.airDashing ||
+                                   hero.cState.superDashing || hero.cState.backDashing ||
+                                   hero.cState.shadowDashing;
+                hornetState.Add(BoolToFloat(isAnyDashing));
+                hornetState.Add(BoolToFloat(hero.cState.dashCooldown));
+                hornetState.Add(BoolToFloat(hero.cState.isSprinting));
+                hornetState.Add(BoolToFloat(hero.cState.superDashOnWall));
+
+                // ==== СТАНИ СТРИБКІВ (3 значення) ====
+                hornetState.Add(BoolToFloat(hero.cState.jumping));
+                hornetState.Add(BoolToFloat(hero.cState.doubleJumping));
+                hornetState.Add(BoolToFloat(hero.cState.wallJumping));
+
+                // ==== СТАНИ АТАК (7 значень) ====
                 hornetState.Add(BoolToFloat(hero.cState.attacking));
-                hornetState.Add(BoolToFloat(hero.cState.lookingUp));
-                hornetState.Add(BoolToFloat(hero.cState.lookingDown));
-                hornetState.Add(BoolToFloat(hero.cState.lookingUpRing));
-                hornetState.Add(BoolToFloat(hero.cState.lookingDownRing));
-                hornetState.Add(BoolToFloat(hero.cState.lookingUpAnim));
-                hornetState.Add(BoolToFloat(hero.cState.lookingDownAnim));
-                hornetState.Add(BoolToFloat(hero.cState.altAttack));
                 hornetState.Add(BoolToFloat(hero.cState.upAttacking));
                 hornetState.Add(BoolToFloat(hero.cState.downAttacking));
-                hornetState.Add(BoolToFloat(hero.cState.downTravelling));
-                hornetState.Add(BoolToFloat(hero.cState.downSpikeAntic));
                 hornetState.Add(BoolToFloat(hero.cState.downSpiking));
-                hornetState.Add(BoolToFloat(hero.cState.downSpikeBouncing));
-                hornetState.Add(BoolToFloat(hero.cState.downSpikeBouncingShort));
-                hornetState.Add(BoolToFloat(hero.cState.downSpikeRecovery));
-                hornetState.Add(BoolToFloat(hero.cState.bouncing));
-                hornetState.Add(BoolToFloat(hero.cState.shroomBouncing));
-                hornetState.Add(BoolToFloat(hero.cState.recoilingRight));
-                hornetState.Add(BoolToFloat(hero.cState.recoilingLeft));
-                hornetState.Add(BoolToFloat(hero.cState.recoilingDrill));
-                hornetState.Add(BoolToFloat(hero.cState.dead));
-                hornetState.Add(BoolToFloat(hero.cState.isFrostDeath));
-                hornetState.Add(BoolToFloat(hero.cState.hazardDeath));
-                hornetState.Add(BoolToFloat(hero.cState.hazardRespawning));
-                hornetState.Add(BoolToFloat(hero.cState.willHardLand));
-                hornetState.Add(BoolToFloat(hero.cState.recoilFrozen));
-                hornetState.Add(BoolToFloat(hero.cState.recoiling));
+                hornetState.Add(BoolToFloat(hero.cState.nailCharging));
+                hornetState.Add(BoolToFloat(hero.cState.altAttack));
+                hornetState.Add(BoolToFloat(hero.cState.isToolThrowing));
+
+                // ==== СТАНИ ЗАХИСТУ/ВІДСКОКУ (5 значень) ====
                 hornetState.Add(BoolToFloat(hero.cState.invulnerable));
-                hornetState.Add(BoolToFloat(hero.cState.casting));
-                hornetState.Add(BoolToFloat(hero.cState.castRecoiling));
-                hornetState.Add(BoolToFloat(hero.cState.preventDash));
-                hornetState.Add(BoolToFloat(hero.cState.preventBackDash));
-                hornetState.Add(BoolToFloat(hero.cState.dashCooldown));
-                hornetState.Add(BoolToFloat(hero.cState.backDashCooldown));
-                hornetState.Add(BoolToFloat(hero.cState.nearBench));
-                hornetState.Add(BoolToFloat(hero.cState.inWalkZone));
-                hornetState.Add(BoolToFloat(hero.cState.isPaused));
-                hornetState.Add(BoolToFloat(hero.cState.onConveyor));
-                hornetState.Add(BoolToFloat(hero.cState.onConveyorV));
-                hornetState.Add(BoolToFloat(hero.cState.inConveyorZone));
-                hornetState.Add(BoolToFloat(hero.cState.spellQuake));
-                hornetState.Add(BoolToFloat(hero.cState.freezeCharge));
-                hornetState.Add(BoolToFloat(hero.cState.focusing));
-                hornetState.Add(BoolToFloat(hero.cState.inAcid));
-                hornetState.Add(BoolToFloat(hero.cState.touchingNonSlider));
-                hornetState.Add(BoolToFloat(hero.cState.wasOnGround));
+                hornetState.Add(BoolToFloat(hero.cState.recoiling));
                 hornetState.Add(BoolToFloat(hero.cState.parrying));
                 hornetState.Add(BoolToFloat(hero.cState.parryAttack));
-                hornetState.Add(BoolToFloat(hero.cState.mantling));
-                hornetState.Add(BoolToFloat(hero.cState.mantleRecovery));
-                hornetState.Add(BoolToFloat(hero.cState.inUpdraft));
-                hornetState.Add(BoolToFloat(hero.cState.isToolThrowing));
-                hornetState.Add(BoolToFloat(hero.cState.isInCancelableFSMMove));
-                hornetState.Add(BoolToFloat(hero.cState.inWindRegion));
-                hornetState.Add(BoolToFloat(hero.cState.isMaggoted));
-                hornetState.Add(BoolToFloat(hero.cState.inFrostRegion));
-                hornetState.Add(BoolToFloat(hero.cState.isFrosted));
-                hornetState.Add(BoolToFloat(hero.cState.isTouchingSlopeLeft));
-                hornetState.Add(BoolToFloat(hero.cState.isTouchingSlopeRight));
-                hornetState.Add(BoolToFloat(hero.cState.isBinding));
-                hornetState.Add(BoolToFloat(hero.cState.needolinPlayingMemory));
-                hornetState.Add(BoolToFloat(hero.cState.isScrewDownAttacking));
-                hornetState.Add(BoolToFloat(hero.cState.evading));
-                hornetState.Add(BoolToFloat(hero.cState.whipLashing));
-                hornetState.Add(BoolToFloat(hero.cState.fakeHurt));
-                hornetState.Add(BoolToFloat(hero.cState.isInCutsceneMovement));
-                hornetState.Add(BoolToFloat(hero.cState.isTriggerEventsPaused));
+                hornetState.Add(BoolToFloat(hero.cState.bouncing));
 
+                // ==== СПЕЦІАЛЬНІ ЗДІБНОСТІ (4 значення) ====
+                hornetState.Add(BoolToFloat(hero.cState.casting));
+                hornetState.Add(BoolToFloat(hero.cState.whipLashing));
+                hornetState.Add(BoolToFloat(hero.cState.mantling));
+                hornetState.Add(BoolToFloat(hero.cState.evading));
+
+                // ==== CAN-МЕТОДИ (13 значень) - ДУЖЕ ВАЖЛИВІ! ====
                 hornetState.Add(BoolToFloat(hero.CanJump()));
                 hornetState.Add(BoolToFloat(hero.CanDoubleJump()));
                 hornetState.Add(BoolToFloat(hero.CanDash()));
@@ -228,7 +172,7 @@ namespace SilksongNeuralNetwork
                 hornetState.Add(BoolToFloat(hero.CanThrowTool()));
             }
 
-            // Global Actions
+            // ==== ГЛОБАЛЬНІ ЗДІБНОСТІ (9 значень) ====
             if (PlayerData.instance != null)
             {
                 globalActions.Add(BoolToFloat(PlayerData.instance.hasDash));
@@ -242,24 +186,23 @@ namespace SilksongNeuralNetwork
                 globalActions.Add(BoolToFloat(PlayerData.instance.hasHarpoonDash));
             }
 
-            // ENEMY DATA (closest enemies)
+            // ==== ДАНІ ПРО ВОРОГІВ (5 значень) ====
             List<float> enemyData = GetEnemyData(hero);
 
-            // RAY SENSOR DATA FOR OBSTACLES (карта/перешкоди)
+            // ==== RAY SENSOR DATA (найважливіша частина!) ====
             List<float> obstacleRaySensorData = GetObstacleRaySensorData(hero);
-
-            // RAY SENSOR DATA FOR ENEMIES (промені по ворогах)
             List<float> enemyRaySensorData = GetEnemyRaySensorData(hero);
+            List<float> enemyProjectilesRaySensorData = GetEnemyProjectilesRaySensorData(hero);
 
-            List<float> enemyProjectilesRaySensorData = GetEnemyProjectilesRaySensorData(hero); 
+            // ==== ОБ'ЄДНАННЯ ВСІХ ДАНИХ ====
+            inputData.AddRange(hornetState);           // ~48 значень
+            inputData.AddRange(globalActions);         // 9 значень
+            inputData.AddRange(enemyData);             // 5 значень
+            inputData.AddRange(obstacleRaySensorData); // 16 значень (ray count)
+            inputData.AddRange(enemyRaySensorData);    // 12 значень (ray count)
+            inputData.AddRange(enemyProjectilesRaySensorData); // залежить від налаштувань
 
-            // MERGE ALL DATA
-            inputData.AddRange(hornetState);
-            inputData.AddRange(globalActions);
-            inputData.AddRange(enemyData);
-            inputData.AddRange(obstacleRaySensorData);
-            inputData.AddRange(enemyRaySensorData);     
-            inputData.AddRange(enemyProjectilesRaySensorData);
+            // Загалом: ~90-100 значень замість 120+
 
             return inputData;
         }

@@ -205,18 +205,35 @@ namespace SilksongNeuralNetwork
                     var target = DataCollector.GetOutputData().ToArray();
 
                     var predictedProbabilities = _nn.Predict(input);
-                    var predictedActions = _nn.ToActions(predictedProbabilities, 0.5f);
+                    var predictedActions = _nn.ToActions(predictedProbabilities, 0.3f);
 
-                    // DEBUG THING HAVE TO DELETE
-                    hero.AddSilk(999, false);
-
-                    // Logger.LogInfo(string.Join(" ", input.Skip(Math.Max(0, input.Length - 20))));
-
-                    if (!_isTrainingMode)
+                    if (_isTrainingMode)
                     {
-                        // Bot plays
+                        // TRAINING MODE: Збираємо досвід і навчаємось на батчах
 
-                        /*
+                        bool playerDidAction = target.Any(actionValue => actionValue > 0.5f);
+
+                        // ЗМІНЕНО: Ми збираємо досвід і навчаємо мережу ТІЛЬКИ якщо гравець щось зробив.
+                        if (playerDidAction)
+                        {
+                            // Збираємо досвід
+                            _nn.CollectExperience(input, target);
+
+                            // Навчаємось на батчах (метод сам контролює частоту навчання)
+                            double error = _nn.TrainBatch();
+                        }
+
+                        // Логуємо статистику кожні 100 кадрів
+                        if (Time.frameCount % 100 == 0)
+                        {
+                            Logger.LogInfo($"[NeuralNet] {_nn.GetStats()}");
+                            Logger.LogInfo($"[NeuralNet] Prediction: {string.Join(",", predictedActions)} | Real Action: {string.Join(",", target)}");
+                        }
+                    }
+                    else
+                    {
+                        // BOT MODE: Бот грає
+
                         List<int> answers = new List<int>();
 
                         for (int i = 0; i < predictedActions.Length; i++)
@@ -227,27 +244,35 @@ namespace SilksongNeuralNetwork
                             }
                         }
 
+                        if (answers.Count > 0) // Логуємо тільки якщо є дії
+                        {
+                            Logger.LogInfo($"Bot actions: {string.Join(" ", answers)}");
+                        }
+
                         foreach (var answerId in answers)
                         {
-                            Logger.LogInfo($"Answer id: {answerId}");
-                            GameAction.GetById(answerId+1).Execute();
-                        }
-                        */
-                    }
-                    if (_isTrainingMode)
-                    {
-                        double error = _nn.Train(input, target);
-
-                        if (Time.frameCount % 1000 == 0)
-                        {
-                            Logger.LogInfo($"[NeuralNet] Instant training error: {error}");
-                            Logger.LogInfo($"[NeuralNet] Prediction: {string.Join(",", predictedActions)} | Real Action: {string.Join(",", target)}");
+                            GameAction.GetById(answerId + 1).Execute();
                         }
                     }
 
+                    // HOTKEYS
                     if (Input.GetKeyDown(KeyCode.W))
                     {
                         _isTrainingMode = !_isTrainingMode;
+                        Logger.LogInfo($"TRAINING MODE: {_isTrainingMode}");
+                    }
+
+                    if (Input.GetKeyDown(KeyCode.Q))
+                    {
+                        // Очистити буфер (якщо хочеш почати навчання заново)
+                        _nn.ClearBuffer();
+                        Logger.LogInfo("Replay buffer cleared!");
+                    }
+
+                    if (Input.GetKeyDown(KeyCode.T))
+                    {
+                        // Показати статистику
+                        Logger.LogInfo($"[Stats] {_nn.GetStats()}");
                     }
 
                     if (Input.GetKeyDown(KeyCode.G))
@@ -269,11 +294,7 @@ namespace SilksongNeuralNetwork
                                 Logger.LogInfo($"Layer {i}: {layerName}");
                         }
                     }
-                    
-                    if (Input.GetKeyDown(KeyCode.E))
-                    {
-                        GameAction.HarpoonDash.Execute();
-                    }
+
 
                     if (Input.GetKeyDown(KeyCode.R))
                     {
@@ -282,13 +303,17 @@ namespace SilksongNeuralNetwork
                             DebugTools.Instance.Visible = !DebugTools.Instance.Visible;
                         }
                     }
+
                     if (Input.GetKeyDown(KeyCode.F11))
                     {
                         _nn.Save("SilksongNN.bin");
+                        Logger.LogInfo("Model saved!");
                     }
+
                     if (Input.GetKeyDown(KeyCode.F12))
                     {
                         _nn = NeuralNet.Load("SilksongNN.bin");
+                        Logger.LogInfo("Model loaded!");
                     }
                 }
             }
