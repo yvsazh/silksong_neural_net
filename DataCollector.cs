@@ -238,16 +238,6 @@ namespace SilksongNeuralNetwork
             outputData.Add(BoolToFloat(Agent.Instance.myInputActions.Left.IsPressed));
 
             // Jump logic
-            if (jumped_steps < 7 && jumped_steps > 1 && !doubleJumped)
-            {
-                jump = true;
-                bigJump = false;
-            }
-            if (jumped_steps > 7 && !doubleJumped)
-            {
-                jump = false;
-                bigJump = true;
-            }
             if (doubleJumped)
             {
                 doubleJump = true;
@@ -260,11 +250,11 @@ namespace SilksongNeuralNetwork
                 jumped_stepsField.SetValue(Agent.Instance.hero, 0);
             }
 
-            outputData.Add(BoolToFloat(jump));
-            outputData.Add(BoolToFloat(bigJump));
-            outputData.Add(BoolToFloat(doubleJump));
+            outputData.Add(BoolToFloat(Agent.Instance.myInputActions.Jump.WasPressed));
+            // outputData.Add(BoolToFloat(bigJump));
+            // outputData.Add(BoolToFloat(doubleJump));
 
-            outputData.Add(BoolToFloat(Agent.Instance.myInputActions.Dash.IsPressed));
+            outputData.Add(BoolToFloat(Agent.Instance.myInputActions.Dash.WasPressed));
 
             // Attacks in different directions
             if (Agent.Instance.hero.cState.attacking && !Agent.Instance.myInputActions.Up.IsPressed && !Agent.Instance.myInputActions.Down.IsPressed)
@@ -279,7 +269,7 @@ namespace SilksongNeuralNetwork
                 upAttack = true;
                 downAttack = false;
             }
-            if (Agent.Instance.myInputActions.Attack.IsPressed && !Agent.Instance.myInputActions.Up.IsPressed && Agent.Instance.myInputActions.Down.IsPressed && !Agent.Instance.hero.cState.onGround)
+            if (Agent.Instance.myInputActions.Attack.WasPressed && !Agent.Instance.myInputActions.Up.IsPressed && Agent.Instance.myInputActions.Down.IsPressed && !Agent.Instance.hero.cState.onGround)
             {
                 attack = false;
                 upAttack = false;

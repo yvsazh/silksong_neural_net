@@ -67,11 +67,12 @@ namespace SilksongNeuralNetwork
 
         // Універсальний метод для кастування променів
         private static List<RaySensorData> CastRaysInternal(
-            Vector2 origin,
-            int rayCount,
-            float maxDistance,
-            LayerMask layerMask,
-            RaySensorType sensorType)
+    Vector2 origin,
+    int rayCount,
+    float maxDistance,
+    LayerMask layerMask,
+    RaySensorType sensorType,
+    GameObject playerObject = null) // Додаємо параметр
         {
             List<RaySensorData> sensorData = new List<RaySensorData>();
             float angleStep = 360f / rayCount;
@@ -88,6 +89,19 @@ namespace SilksongNeuralNetwork
                     layerMask
                 );
 
+                // Ігноруємо колайдери власного персонажа
+                while (hit.collider != null && playerObject != null &&
+                       hit.collider.transform.IsChildOf(playerObject.transform))
+                {
+                    // Продовжуємо промінь далі
+                    hit = Physics2D.Raycast(
+                        hit.point + direction * 0.01f,
+                        direction,
+                        maxDistance - hit.distance,
+                        layerMask
+                    );
+                }
+
                 RaySensorData data = new RaySensorData
                 {
                     direction = direction,
@@ -102,7 +116,6 @@ namespace SilksongNeuralNetwork
                 }
                 else
                 {
-
                     data.normalizedDistance = 1f;
                     data.hitPoint = origin + direction * maxDistance;
                 }
@@ -110,7 +123,6 @@ namespace SilksongNeuralNetwork
                 sensorData.Add(data);
             }
 
-            // Відмальовуємо промені для дебагу
             if (DebugTools.Instance != null)
             {
                 DebugTools.Instance.DrawRaySensors(origin, sensorData, maxDistance, sensorType);
@@ -148,7 +160,7 @@ namespace SilksongNeuralNetwork
                 Initialize();
             }
 
-            return CastRaysInternal(origin, _enemyProjectilesRayCount, _enemyProjectilesMaxDistance, _enemyProjectilesLayerMask, RaySensorType.EnemiesProjectiles);
+            return CastRaysInternal(origin, _enemyProjectilesRayCount, _enemyProjectilesMaxDistance, _enemyProjectilesLayerMask, RaySensorType.EnemiesProjectiles, Agent.Instance.hero.gameObject);
         }
 
         // Отримання даних у вигляді списку float для нейромережі (перешкоди)

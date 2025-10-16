@@ -204,9 +204,12 @@ namespace SilksongNeuralNetwork
                     var input = DataCollector.GetInputData().ToArray();
                     var target = DataCollector.GetOutputData().ToArray();
 
+                    Logger.LogInfo(string.Join(", ", target));
+
                     var predictedProbabilities = _nn.Predict(input);
                     var predictedActions = _nn.ToActions(predictedProbabilities, 0.3f);
 
+                    hero.AddSilk(999, false);
                     if (_isTrainingMode)
                     {
                         // TRAINING MODE: Збираємо досвід і навчаємось на батчах
@@ -254,7 +257,6 @@ namespace SilksongNeuralNetwork
                             GameAction.GetById(answerId + 1).Execute();
                         }
                     }
-
                     // HOTKEYS
                     if (Input.GetKeyDown(KeyCode.W))
                     {
@@ -269,13 +271,13 @@ namespace SilksongNeuralNetwork
                         Logger.LogInfo("Replay buffer cleared!");
                     }
 
-                    if (Input.GetKeyDown(KeyCode.T))
+                    if (Input.GetKey(KeyCode.T))
                     {
                         // Показати статистику
                         Logger.LogInfo($"[Stats] {_nn.GetStats()}");
                     }
 
-                    if (Input.GetKeyDown(KeyCode.G))
+                    if (Input.GetKey(KeyCode.G))
                     {
                         var allObjects = GameObject.FindObjectsOfType<GameObject>();
                         var usedLayers = new HashSet<int>(allObjects.Select(obj => obj.layer));
@@ -285,18 +287,14 @@ namespace SilksongNeuralNetwork
                         }
                     }
 
-                    if (Input.GetKeyDown(KeyCode.L))
+                    if (Input.GetKey(KeyCode.E))
                     {
-                        /*
                         for (int i = 0; i < 32; i++)
                         {
                             string layerName = LayerMask.LayerToName(i);
                             if (!string.IsNullOrEmpty(layerName))
                                 Logger.LogInfo($"Layer {i}: {layerName}");
                         }
-                        */
-                        var answerId = 3;
-                        GameAction.GetById(answerId + 1).Execute();
                     }
 
 
