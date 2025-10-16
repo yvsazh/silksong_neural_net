@@ -6,35 +6,28 @@ using UnityEngine;
 
 namespace SilksongNeuralNetwork
 {
-    /// <summary>
-    /// Оптимізована нейронна мережа з покращеною продуктивністю та стабільністю
-    /// </summary>
     public class NeuralNet
     {
         private Layer[] _layers;
         private readonly object _trainingLock = new object();
 
-        // Кешовані масиви для уникнення алокацій
         private double[] _inputCache;
         private double[] _outputCache;
 
         public int InputSize { get; private set; }
         public int OutputSize { get; private set; }
 
-        // Гіперпараметри
         public double LearningRate { get; set; } = 0.001;
         public double Momentum { get; set; } = 0.9;
         public double GradientClipValue { get; set; } = 1.0;
         public double L2Regularization { get; set; } = 0.0001;
 
-        // Оптимізатор
         public OptimizerType Optimizer { get; set; } = OptimizerType.Adam;
         public double Beta1 { get; set; } = 0.9;
         public double Beta2 { get; set; } = 0.999;
         public double Epsilon { get; set; } = 1e-8;
         private int _timestep = 0;
 
-        // Experience replay з кільцевим буфером
         private Experience[] _replayBuffer;
         private int _bufferHead = 0;
         private int _bufferCount = 0;
@@ -42,20 +35,23 @@ namespace SilksongNeuralNetwork
         private const int BATCH_SIZE = 64;
         private const int MIN_BUFFER_SIZE = 128;
 
-        // Навчання
         private int _frameCounter = 0;
-        private const int TRAIN_EVERY_N_FRAMES = 100; // Частіше навчання = швидша конвергенція
+        private const int TRAIN_EVERY_N_FRAMES = 100;
 
-        // Статистика
         public int TotalSamplesCollected { get; private set; } = 0;
         public double LastBatchError { get; private set; } = 0;
         public double RunningAvgError { get; private set; } = 0;
         private const double ERROR_SMOOTHING = 0.99;
 
+        // Статистика для відстеження балансу дій
+        private int[] _actionCounts;
+        private int _statsFrameCounter = 0;
+
         private struct Experience
         {
             public double[] Input;
             public double[] Target;
+            public float Priority;
         }
 
         private class Layer
@@ -65,13 +61,11 @@ namespace SilksongNeuralNetwork
             public double[] Output;
             public double[] Input;
             public double[] Delta;
-            public double[] PreActivation; // Для batch norm
+            public double[] PreActivation;
 
-            // SGD з моментумом
             public double[,] WeightVelocity;
             public double[] BiasVelocity;
 
-            // Adam оптимізатор
             public double[,] WeightM;
             public double[,] WeightV;
             public double[] BiasM;
@@ -106,7 +100,6 @@ namespace SilksongNeuralNetwork
             {
                 var random = new System.Random(Guid.NewGuid().GetHashCode());
 
-                // He для ReLU/LeakyReLU, Xavier для Sigmoid/Tanh
                 double scale = Activation == ActivationType.ReLU || Activation == ActivationType.LeakyReLU
                     ? Math.Sqrt(2.0 / inputSize)
                     : Math.Sqrt(1.0 / inputSize);
@@ -119,7 +112,6 @@ namespace SilksongNeuralNetwork
                     }
                 }
 
-                // Малі позитивні bias для ReLU (уникнення "мертвих нейронів")
                 double biasInit = Activation == ActivationType.ReLU ? 0.01 : 0.0;
                 for (int j = 0; j < outputSize; j++)
                 {
@@ -129,10 +121,8 @@ namespace SilksongNeuralNetwork
 
             public void Forward(double[] input, double[] output)
             {
-                // Зберігаємо вхід для backprop
                 Array.Copy(input, Input, input.Length);
 
-                // Матричне множення: output = input * Weights + Biases
                 for (int j = 0; j < OutputSize; j++)
                 {
                     double sum = Biases[j];
@@ -161,7 +151,6 @@ namespace SilksongNeuralNetwork
                         return Math.Tanh(x);
 
                     case ActivationType.Sigmoid:
-                        // Стабільний sigmoid
                         return x >= 0
                             ? 1.0 / (1.0 + Math.Exp(-x))
                             : Math.Exp(x) / (1.0 + Math.Exp(x));
@@ -220,7 +209,6 @@ namespace SilksongNeuralNetwork
             LearningRate = learningRate;
             Momentum = momentum;
 
-            // Автоматична архітектура якщо не задано
             if (hiddenLayers == null || hiddenLayers.Length == 0)
             {
                 int h1 = Math.Max(64, Math.Min(256, inputSize * 2));
@@ -230,13 +218,14 @@ namespace SilksongNeuralNetwork
 
             InitializeNetwork(hiddenLayers);
             InitializeBuffers();
+
+            _actionCounts = new int[outputSize];
         }
 
         private void InitializeNetwork(int[] hiddenLayers)
         {
             var layersList = new List<Layer>();
 
-            // Приховані шари з LeakyReLU (краще ніж ReLU для градієнтів)
             int previousSize = InputSize;
             foreach (int size in hiddenLayers)
             {
@@ -244,8 +233,7 @@ namespace SilksongNeuralNetwork
                 previousSize = size;
             }
 
-            // Вихідний шар з Tanh (краще ніж Sigmoid для градієнтів)
-            layersList.Add(new Layer(previousSize, OutputSize, ActivationType.Tanh));
+            layersList.Add(new Layer(previousSize, OutputSize, ActivationType.Sigmoid));
 
             _layers = layersList.ToArray();
 
@@ -277,11 +265,9 @@ namespace SilksongNeuralNetwork
             if (input.Length != InputSize)
                 throw new ArgumentException($"Input size mismatch: expected {InputSize}, got {input.Length}");
 
-            // Конвертуємо тільки раз
             for (int i = 0; i < InputSize; i++)
                 _inputCache[i] = input[i];
 
-            // Forward pass (без lock для швидкості inference)
             double[] current = _inputCache;
             double[] temp = new double[_layers[0].OutputSize];
 
@@ -295,7 +281,6 @@ namespace SilksongNeuralNetwork
                 current = output;
             }
 
-            // Конвертуємо назад
             float[] result = new float[OutputSize];
             for (int i = 0; i < OutputSize; i++)
                 result[i] = (float)_outputCache[i];
@@ -308,10 +293,14 @@ namespace SilksongNeuralNetwork
             if (input == null || target == null) return;
             if (input.Length != InputSize || target.Length != OutputSize) return;
 
+            // Обчислюємо пріоритет на основі рідкості дій
+            float priority = CalculatePriority(target);
+
             var exp = new Experience
             {
                 Input = new double[InputSize],
-                Target = new double[OutputSize]
+                Target = new double[OutputSize],
+                Priority = priority
             };
 
             for (int i = 0; i < InputSize; i++)
@@ -325,14 +314,117 @@ namespace SilksongNeuralNetwork
                 _bufferHead = (_bufferHead + 1) % MAX_BUFFER_SIZE;
                 if (_bufferCount < MAX_BUFFER_SIZE)
                     _bufferCount++;
+
+                // Оновлюємо статистику
+                for (int i = 0; i < OutputSize; i++)
+                {
+                    if (target[i] > 0.5f)
+                        _actionCounts[i]++;
+                }
             }
 
             TotalSamplesCollected++;
         }
 
+        private float CalculatePriority(float[] target)
+        {
+            // Базовий пріоритет
+            float priority = 1.0f;
+
+            // Індекси дій (з GetOutputData та GameAction):
+            // 0: Right (GoRight) - ДУЖЕ часта дія
+            // 1: Left (GoLeft) - ДУЖЕ часта дія
+            // 2: Jump (BigJump) - рідкісна, КРИТИЧНО ВАЖЛИВА
+            // 3: Dash - рідкісна, дуже важлива для мобільності
+            // 4: Attack - середня частота, важлива в бою
+            // 5: DownAttack - рідкісна, важлива (pogo)
+            // 6: UpAttack - рідкісна, важлива
+            // 7: Cast (Bind) - рідкісна, дуже важлива
+            // 8: MainAbility (A Sphere) - рідкісна
+            // 9: FirstTool - дуже рідкісна
+            // 10: SecondTool - дуже рідкісна
+            // 11: HarpoonDash - дуже рідкісна, критична для швидкого пересування
+
+            // РУХИ (дуже часті) - мінімальний пріоритет
+            if (target[0] > 0.5f || target[1] > 0.5f)
+            {
+                priority *= 0.4f; // Зменшуємо ще більше, бо вони домінують
+            }
+
+            // СТРИБОК - МАКСИМАЛЬНИЙ пріоритет (найважливіша механіка в платформері!)
+            if (target[2] > 0.5f)
+            {
+                priority *= 8.0f; // Дуже високий пріоритет
+            }
+
+            // ДАШ - дуже високий пріоритет (ключова механіка руху)
+            if (target[3] > 0.5f)
+            {
+                priority *= 6.0f;
+            }
+
+            // ЗВИЧАЙНА АТАКА - середній пріоритет
+            if (target[4] > 0.5f)
+            {
+                priority *= 3.0f;
+            }
+
+            // DOWN ATTACK - високий пріоритет (pogo - важлива техніка)
+            if (target[5] > 0.5f)
+            {
+                priority *= 5.0f;
+            }
+
+            // UP ATTACK - високий пріоритет
+            if (target[6] > 0.5f)
+            {
+                priority *= 5.0f;
+            }
+
+            // CAST/BIND - дуже високий пріоритет (лікування/зцілення)
+            if (target[7] > 0.5f)
+            {
+                priority *= 7.0f;
+            }
+
+            // MAIN ABILITY (A Sphere) - високий пріоритет
+            if (target[8] > 0.5f)
+            {
+                priority *= 5.0f;
+            }
+
+            // FIRST TOOL - дуже високий пріоритет
+            if (target[9] > 0.5f)
+            {
+                priority *= 6.0f;
+            }
+
+            // SECOND TOOL - дуже високий пріоритет
+            if (target[10] > 0.5f)
+            {
+                priority *= 6.0f;
+            }
+
+            // HARPOON DASH - максимальний пріоритет (дуже рідкісна і потужна механіка)
+            if (target[11] > 0.5f)
+            {
+                priority *= 8.0f;
+            }
+
+            return priority;
+        }
+
         public double TrainBatch()
         {
             _frameCounter++;
+            _statsFrameCounter++;
+
+            // Логуємо статистику кожні 1000 кадрів
+            if (_statsFrameCounter >= 1000)
+            {
+                LogActionStatistics();
+                _statsFrameCounter = 0;
+            }
 
             if (_frameCounter % TRAIN_EVERY_N_FRAMES != 0)
                 return LastBatchError;
@@ -346,14 +438,25 @@ namespace SilksongNeuralNetwork
                 var random = new System.Random();
                 var usedIndices = new HashSet<int>();
 
-                // Сэмплюємо унікальні зразки
+                // Обчислюємо суму пріоритетів
+                double totalPriority = 0;
+                for (int i = 0; i < _bufferCount; i++)
+                {
+                    totalPriority += _replayBuffer[i].Priority;
+                }
+
+                // Семплюємо з урахуванням пріоритетів
                 for (int i = 0; i < Math.Min(BATCH_SIZE, _bufferCount); i++)
                 {
-                    int idx;
-                    do
+                    int idx = SampleByPriority(random, totalPriority);
+
+                    // Уникаємо дублікатів
+                    int attempts = 0;
+                    while (usedIndices.Contains(idx) && attempts < 100)
                     {
-                        idx = random.Next(_bufferCount);
-                    } while (usedIndices.Contains(idx));
+                        idx = SampleByPriority(random, totalPriority);
+                        attempts++;
+                    }
 
                     usedIndices.Add(idx);
                     var exp = _replayBuffer[idx];
@@ -367,9 +470,38 @@ namespace SilksongNeuralNetwork
             }
         }
 
+        private int SampleByPriority(System.Random random, double totalPriority)
+        {
+            double randomValue = random.NextDouble() * totalPriority;
+            double cumulative = 0;
+
+            for (int i = 0; i < _bufferCount; i++)
+            {
+                cumulative += _replayBuffer[i].Priority;
+                if (randomValue <= cumulative)
+                    return i;
+            }
+
+            return _bufferCount - 1;
+        }
+
+        private void LogActionStatistics()
+        {
+            string[] actionNames = {
+                "Right", "Left", "Jump", "Dash", "Attack", "DownAttack",
+                "UpAttack", "Cast", "MainAbility", "FirstTool", "SecondTool", "HarpoonDash"
+            };
+
+            string stats = "[NeuralNet] Action Distribution:\n";
+            for (int i = 0; i < Math.Min(_actionCounts.Length, actionNames.Length); i++)
+            {
+                stats += $"  {actionNames[i]}: {_actionCounts[i]}\n";
+            }
+            Debug.Log(stats);
+        }
+
         private double TrainSingle(double[] input, double[] target)
         {
-            // Forward pass
             double[] current = input;
             double[][] layerOutputs = new double[_layers.Length][];
 
@@ -380,7 +512,6 @@ namespace SilksongNeuralNetwork
                 current = layerOutputs[l];
             }
 
-            // Обчислюємо помилку (MSE)
             double error = 0;
             for (int i = 0; i < OutputSize; i++)
             {
@@ -389,10 +520,7 @@ namespace SilksongNeuralNetwork
             }
             error /= OutputSize;
 
-            // Backpropagation
             Backpropagate(target);
-
-            // Оновлюємо ваги
             UpdateWeights();
 
             return error;
@@ -400,7 +528,6 @@ namespace SilksongNeuralNetwork
 
         private void Backpropagate(double[] target)
         {
-            // Вихідний шар
             var outputLayer = _layers[_layers.Length - 1];
             for (int i = 0; i < outputLayer.OutputSize; i++)
             {
@@ -409,7 +536,6 @@ namespace SilksongNeuralNetwork
                 outputLayer.Delta[i] = error * outputLayer.ActivationDerivative(i);
             }
 
-            // Приховані шари (зворотний прохід)
             for (int l = _layers.Length - 2; l >= 0; l--)
             {
                 var currentLayer = _layers[l];
@@ -446,11 +572,7 @@ namespace SilksongNeuralNetwork
                     for (int j = 0; j < layer.OutputSize; j++)
                     {
                         double gradient = layer.Input[i] * layer.Delta[j];
-
-                        // L2 регуляризація
                         gradient += L2Regularization * layer.Weights[i, j];
-
-                        // Gradient clipping
                         gradient = Math.Max(-GradientClipValue, Math.Min(GradientClipValue, gradient));
 
                         double velocity = Momentum * layer.WeightVelocity[i, j] - LearningRate * gradient;
@@ -525,12 +647,10 @@ namespace SilksongNeuralNetwork
             {
                 using (var writer = new BinaryWriter(File.Open(path, FileMode.Create)))
                 {
-                    // Header
                     writer.Write(InputSize);
                     writer.Write(OutputSize);
                     writer.Write(_layers.Length);
 
-                    // Layers
                     foreach (var layer in _layers)
                     {
                         writer.Write(layer.InputSize);
@@ -556,41 +676,35 @@ namespace SilksongNeuralNetwork
 
             using (var reader = new BinaryReader(File.Open(path, FileMode.Open)))
             {
-                // Читаємо header
                 int inputSize = reader.ReadInt32();
                 int outputSize = reader.ReadInt32();
                 int layerCount = reader.ReadInt32();
 
-                // Визначаємо розміри прихованих шарів
                 var hiddenSizes = new List<int>();
                 long startPos = reader.BaseStream.Position;
 
                 for (int l = 0; l < layerCount - 1; l++)
                 {
-                    reader.ReadInt32(); // inputSize
+                    reader.ReadInt32();
                     int outSize = reader.ReadInt32();
                     int activation = reader.ReadInt32();
                     hiddenSizes.Add(outSize);
 
-                    // Пропускаємо ваги та bias
                     int inSize = l == 0 ? inputSize : hiddenSizes[l - 1];
                     reader.BaseStream.Position += (inSize * outSize + outSize) * sizeof(double);
                 }
 
-                // Створюємо мережу
                 var net = new NeuralNet(inputSize, outputSize, hiddenSizes.ToArray());
 
-                // Повертаємося до початку даних
                 reader.BaseStream.Position = startPos;
 
-                // Завантажуємо ваги
                 lock (net._trainingLock)
                 {
                     foreach (var layer in net._layers)
                     {
-                        reader.ReadInt32(); // inputSize
-                        reader.ReadInt32(); // outputSize
-                        reader.ReadInt32(); // activation
+                        reader.ReadInt32();
+                        reader.ReadInt32();
+                        reader.ReadInt32();
 
                         for (int i = 0; i < layer.InputSize; i++)
                             for (int j = 0; j < layer.OutputSize; j++)
@@ -612,6 +726,7 @@ namespace SilksongNeuralNetwork
             {
                 _bufferHead = 0;
                 _bufferCount = 0;
+                Array.Clear(_actionCounts, 0, _actionCounts.Length);
             }
         }
 

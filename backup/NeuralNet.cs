@@ -2,270 +2,616 @@
 using System.IO;
 using System.Collections.Generic;
 using System.Linq;
-using Accord.Neuro;
-using Accord.Neuro.Learning;
-using BepInEx.Logging;
 using UnityEngine;
 
 namespace SilksongNeuralNetwork
 {
-    /// <summary>
-    /// Optimized neural network with experience replay and balanced training
-    /// </summary>
     public class NeuralNet
     {
-        private ActivationNetwork _network;
-        private BackPropagationLearning _teacher;
-        private readonly object _lock = new object();
+        private Layer[] _layers;
+        private readonly object _trainingLock = new object();
+
+        private double[] _inputCache;
+        private double[] _outputCache;
 
         public int InputSize { get; private set; }
         public int OutputSize { get; private set; }
 
-        // Hyper-parameters
-        public double LearningRate { get; set; } = 0.05; // Збільшено для швидшого навчання
+        public double LearningRate { get; set; } = 0.001;
         public double Momentum { get; set; } = 0.9;
+        public double GradientClipValue { get; set; } = 1.0;
+        public double L2Regularization { get; set; } = 0.0001;
 
-        // Experience replay buffer
-        private Queue<Experience> _replayBuffer = new Queue<Experience>();
+        public OptimizerType Optimizer { get; set; } = OptimizerType.Adam;
+        public double Beta1 { get; set; } = 0.9;
+        public double Beta2 { get; set; } = 0.999;
+        public double Epsilon { get; set; } = 1e-8;
+        private int _timestep = 0;
+
+        private Experience[] _replayBuffer;
+        private int _bufferHead = 0;
+        private int _bufferCount = 0;
         private const int MAX_BUFFER_SIZE = 10000;
-        private const int MIN_BUFFER_SIZE = 500; // Мінімум для початку навчання
-        private const int BATCH_SIZE = 32;
+        private const int BATCH_SIZE = 64;
+        private const int MIN_BUFFER_SIZE = 128;
 
-        // Training control
         private int _frameCounter = 0;
-        private const int TRAIN_EVERY_N_FRAMES = 5; // Навчаємось кожні 5 кадрів
+        private const int TRAIN_EVERY_N_FRAMES = 100;
 
-        // Statistics
-        public int TotalSamplesCollected { get; private set; } = 0; // ЗМІНЕНО: Залишаємо тільки загальну кількість
+        public int TotalSamplesCollected { get; private set; } = 0;
         public double LastBatchError { get; private set; } = 0;
+        public double RunningAvgError { get; private set; } = 0;
+        private const double ERROR_SMOOTHING = 0.99;
 
-        // ЗМІНЕНО: Спрощено клас Experience, бо всі дані тепер "активні"
-        private class Experience
+        private struct Experience
         {
-            public float[] Input;
-            public float[] Target;
+            public double[] Input;
+            public double[] Target;
+        }
 
-            public Experience(float[] input, float[] target)
+        private class Layer
+        {
+            public double[,] Weights;
+            public double[] Biases;
+            public double[] Output;
+            public double[] Input;
+            public double[] Delta;
+            public double[] PreActivation; // Для batch norm
+
+            // SGD з моментумом
+            public double[,] WeightVelocity;
+            public double[] BiasVelocity;
+
+            // Adam оптимізатор
+            public double[,] WeightM;
+            public double[,] WeightV;
+            public double[] BiasM;
+            public double[] BiasV;
+
+            public ActivationType Activation;
+            public int InputSize => Weights.GetLength(0);
+            public int OutputSize => Weights.GetLength(1);
+
+            public Layer(int inputSize, int outputSize, ActivationType activation)
             {
-                Input = input;
-                Target = target;
+                Weights = new double[inputSize, outputSize];
+                Biases = new double[outputSize];
+                Output = new double[outputSize];
+                Input = new double[inputSize];
+                Delta = new double[outputSize];
+                PreActivation = new double[outputSize];
+
+                WeightVelocity = new double[inputSize, outputSize];
+                BiasVelocity = new double[outputSize];
+
+                WeightM = new double[inputSize, outputSize];
+                WeightV = new double[inputSize, outputSize];
+                BiasM = new double[outputSize];
+                BiasV = new double[outputSize];
+
+                Activation = activation;
+                InitializeWeights(inputSize, outputSize);
+            }
+
+            private void InitializeWeights(int inputSize, int outputSize)
+            {
+                var random = new System.Random(Guid.NewGuid().GetHashCode());
+
+                // He для ReLU/LeakyReLU, Xavier для Sigmoid/Tanh
+                double scale = Activation == ActivationType.ReLU || Activation == ActivationType.LeakyReLU
+                    ? Math.Sqrt(2.0 / inputSize)
+                    : Math.Sqrt(1.0 / inputSize);
+
+                for (int i = 0; i < inputSize; i++)
+                {
+                    for (int j = 0; j < outputSize; j++)
+                    {
+                        Weights[i, j] = (random.NextDouble() * 2 - 1) * scale;
+                    }
+                }
+
+                // Малі позитивні bias для ReLU (уникнення "мертвих нейронів")
+                double biasInit = Activation == ActivationType.ReLU ? 0.01 : 0.0;
+                for (int j = 0; j < outputSize; j++)
+                {
+                    Biases[j] = biasInit;
+                }
+            }
+
+            public void Forward(double[] input, double[] output)
+            {
+                // Зберігаємо вхід для backprop
+                Array.Copy(input, Input, input.Length);
+
+                // Матричне множення: output = input * Weights + Biases
+                for (int j = 0; j < OutputSize; j++)
+                {
+                    double sum = Biases[j];
+                    for (int i = 0; i < InputSize; i++)
+                    {
+                        sum += input[i] * Weights[i, j];
+                    }
+                    PreActivation[j] = sum;
+                    output[j] = ApplyActivation(sum);
+                }
+
+                Array.Copy(output, Output, output.Length);
+            }
+
+            private double ApplyActivation(double x)
+            {
+                switch (Activation)
+                {
+                    case ActivationType.ReLU:
+                        return Math.Max(0, x);
+
+                    case ActivationType.LeakyReLU:
+                        return x > 0 ? x : 0.01 * x;
+
+                    case ActivationType.Tanh:
+                        return Math.Tanh(x);
+
+                    case ActivationType.Sigmoid:
+                        // Стабільний sigmoid
+                        return x >= 0
+                            ? 1.0 / (1.0 + Math.Exp(-x))
+                            : Math.Exp(x) / (1.0 + Math.Exp(x));
+
+                    default:
+                        return x;
+                }
+            }
+
+            public double ActivationDerivative(int index)
+            {
+                double output = Output[index];
+
+                switch (Activation)
+                {
+                    case ActivationType.ReLU:
+                        return output > 0 ? 1.0 : 0.0;
+
+                    case ActivationType.LeakyReLU:
+                        return output > 0 ? 1.0 : 0.01;
+
+                    case ActivationType.Tanh:
+                        return 1.0 - output * output;
+
+                    case ActivationType.Sigmoid:
+                        return output * (1.0 - output);
+
+                    default:
+                        return 1.0;
+                }
             }
         }
 
-        public NeuralNet(int inputSize, int outputSize, int[] hiddenLayers = null, double learningRate = 0.05, double momentum = 0.9)
+        private enum ActivationType
         {
+            ReLU,
+            LeakyReLU,
+            Sigmoid,
+            Tanh
+        }
+
+        public enum OptimizerType
+        {
+            SGD,
+            Adam
+        }
+
+        public NeuralNet(int inputSize, int outputSize, int[] hiddenLayers = null,
+                         double learningRate = 0.001, double momentum = 0.9)
+        {
+            if (inputSize <= 0 || outputSize <= 0)
+                throw new ArgumentException("Input/Output size must be positive");
+
             InputSize = inputSize;
             OutputSize = outputSize;
             LearningRate = learningRate;
             Momentum = momentum;
 
+            // Автоматична архітектура якщо не задано
             if (hiddenLayers == null || hiddenLayers.Length == 0)
             {
-                // Глибша мережа для кращого навчання
-                int h1 = Math.Max(128, Math.Min(512, inputSize * 2));
-                int h2 = Math.Max(64, Math.Min(256, inputSize));
-                int h3 = Math.Max(32, Math.Min(128, outputSize * 4));
-                hiddenLayers = new int[] { h1, h2, h3 };
+                int h1 = Math.Max(64, Math.Min(256, inputSize * 2));
+                int h2 = Math.Max(32, Math.Min(128, inputSize));
+                hiddenLayers = new int[] { h1, h2 };
             }
 
             InitializeNetwork(hiddenLayers);
+            InitializeBuffers();
         }
 
         private void InitializeNetwork(int[] hiddenLayers)
         {
-            int totalLayers = hiddenLayers.Length + 1;
-            int[] allLayers = new int[totalLayers];
-            for (int i = 0; i < hiddenLayers.Length; i++) allLayers[i] = hiddenLayers[i];
-            allLayers[allLayers.Length - 1] = OutputSize;
+            var layersList = new List<Layer>();
 
-            _network = new ActivationNetwork(new SigmoidFunction(), InputSize, allLayers);
-
-            var init = new NguyenWidrow(_network);
-            init.Randomize();
-
-
-
-            _teacher = new BackPropagationLearning(_network)
+            // Приховані шари з LeakyReLU (краще ніж ReLU для градієнтів)
+            int previousSize = InputSize;
+            foreach (int size in hiddenLayers)
             {
-                LearningRate = LearningRate,
-                Momentum = Momentum
-            };
+                layersList.Add(new Layer(previousSize, size, ActivationType.LeakyReLU));
+                previousSize = size;
+            }
 
-            Debug.Log($"[NeuralNet] Initialized network (in:{InputSize}, out:{OutputSize}, hidden: {string.Join(",", hiddenLayers)})");
+            // Вихідний шар з Tanh (краще ніж Sigmoid для градієнтів)
+            layersList.Add(new Layer(previousSize, OutputSize, ActivationType.Sigmoid));
+
+            _layers = layersList.ToArray();
+
+            Debug.Log($"[NeuralNet] Ініціалізовано мережу: in={InputSize}, out={OutputSize}, " +
+                     $"hidden=[{string.Join(",", hiddenLayers)}]");
+            Debug.Log($"[NeuralNet] Параметрів: {CountParameters()}");
+        }
+
+        private void InitializeBuffers()
+        {
+            _replayBuffer = new Experience[MAX_BUFFER_SIZE];
+            _inputCache = new double[InputSize];
+            _outputCache = new double[OutputSize];
+        }
+
+        private int CountParameters()
+        {
+            int count = 0;
+            foreach (var layer in _layers)
+            {
+                count += layer.Weights.Length + layer.Biases.Length;
+            }
+            return count;
         }
 
         public float[] Predict(float[] input)
         {
             if (input == null) throw new ArgumentNullException(nameof(input));
-            if (input.Length != InputSize) throw new ArgumentException("Input length mismatch");
+            if (input.Length != InputSize)
+                throw new ArgumentException($"Input size mismatch: expected {InputSize}, got {input.Length}");
 
-            double[] inD = ToDouble(input);
-            double[] outD;
-            lock (_lock)
+            // Конвертуємо тільки раз
+            for (int i = 0; i < InputSize; i++)
+                _inputCache[i] = input[i];
+
+            // Forward pass (без lock для швидкості inference)
+            double[] current = _inputCache;
+            double[] temp = new double[_layers[0].OutputSize];
+
+            for (int l = 0; l < _layers.Length; l++)
             {
-                outD = _network.Compute(inD);
+                var layer = _layers[l];
+                var output = l == _layers.Length - 1 ? _outputCache :
+                           (l == 0 ? temp : new double[layer.OutputSize]);
+
+                layer.Forward(current, output);
+                current = output;
             }
 
-            return ToFloat(outD);
+            // Конвертуємо назад
+            float[] result = new float[OutputSize];
+            for (int i = 0; i < OutputSize; i++)
+                result[i] = (float)_outputCache[i];
+
+            return result;
         }
 
-        /// <summary>
-        /// Collect experience into replay buffer instead of immediate training
-        /// </summary>
         public void CollectExperience(float[] input, float[] target)
         {
             if (input == null || target == null) return;
             if (input.Length != InputSize || target.Length != OutputSize) return;
 
-            var exp = new Experience(input, target);
-
-            // ЗМІНЕНО: Спрощена статистика
-            TotalSamplesCollected++;
-
-            lock (_lock)
+            var exp = new Experience
             {
-                _replayBuffer.Enqueue(exp);
+                Input = new double[InputSize],
+                Target = new double[OutputSize]
+            };
 
-                // Обмежуємо розмір буфера
-                while (_replayBuffer.Count > MAX_BUFFER_SIZE)
-                {
-                    _replayBuffer.Dequeue();
-                }
+            for (int i = 0; i < InputSize; i++)
+                exp.Input[i] = input[i];
+            for (int i = 0; i < OutputSize; i++)
+                exp.Target[i] = target[i];
+
+            lock (_trainingLock)
+            {
+                _replayBuffer[_bufferHead] = exp;
+                _bufferHead = (_bufferHead + 1) % MAX_BUFFER_SIZE;
+                if (_bufferCount < MAX_BUFFER_SIZE)
+                    _bufferCount++;
             }
+
+            TotalSamplesCollected++;
         }
 
-        /// <summary>
-        /// Train on a batch from replay buffer.
-        /// Call this periodically (not every frame)
-        /// </summary>
         public double TrainBatch()
         {
             _frameCounter++;
 
-            // Не навчаємось кожен кадр
             if (_frameCounter % TRAIN_EVERY_N_FRAMES != 0)
                 return LastBatchError;
 
-            // ЗМІНЕНО: Повністю перероблена і спрощена логіка
-            lock (_lock)
+            lock (_trainingLock)
             {
-                // Навчаємось, тільки якщо є достатньо даних для одного батчу
-                if (_replayBuffer.Count < BATCH_SIZE)
+                if (_bufferCount < MIN_BUFFER_SIZE)
                     return 0;
 
-                var experiences = _replayBuffer.ToArray();
-                var batch = new List<Experience>();
-                var random = new System.Random();
-
-                // Випадково вибираємо дані для батчу. Всі дані в буфері є "активними".
-                for (int i = 0; i < BATCH_SIZE; i++)
-                {
-                    batch.Add(experiences[random.Next(experiences.Length)]);
-                }
-
-                // Навчаємось на батчі
                 double totalError = 0;
-                foreach (var exp in batch)
+                var random = new System.Random();
+                var usedIndices = new HashSet<int>();
+
+                // Сэмплюємо унікальні зразки
+                for (int i = 0; i < Math.Min(BATCH_SIZE, _bufferCount); i++)
                 {
-                    double[] inD = ToDouble(exp.Input);
-                    double[] tgtD = ToDouble(exp.Target);
-                    totalError += _teacher.Run(inD, tgtD);
+                    int idx;
+                    do
+                    {
+                        idx = random.Next(_bufferCount);
+                    } while (usedIndices.Contains(idx));
+
+                    usedIndices.Add(idx);
+                    var exp = _replayBuffer[idx];
+                    totalError += TrainSingle(exp.Input, exp.Target);
                 }
 
-                LastBatchError = totalError / batch.Count;
+                LastBatchError = totalError / usedIndices.Count;
+                RunningAvgError = RunningAvgError * ERROR_SMOOTHING + LastBatchError * (1 - ERROR_SMOOTHING);
+
                 return LastBatchError;
             }
         }
 
-        /// <summary>
-        /// Legacy method for immediate training (not recommended)
-        /// </summary>
-        public double Train(float[] input, float[] target)
+        private double TrainSingle(double[] input, double[] target)
         {
-            if (input == null) throw new ArgumentNullException(nameof(input));
-            if (target == null) throw new ArgumentNullException(nameof(target));
-            if (input.Length != InputSize) throw new ArgumentException("Input length mismatch");
-            if (target.Length != OutputSize) throw new ArgumentException("Target length mismatch");
+            // Forward pass
+            double[] current = input;
+            double[][] layerOutputs = new double[_layers.Length][];
 
-            double[] inD = ToDouble(input);
-            double[] tgtD = ToDouble(target);
-            double error;
-
-            lock (_lock)
+            for (int l = 0; l < _layers.Length; l++)
             {
-                error = _teacher.Run(inD, tgtD);
+                layerOutputs[l] = new double[_layers[l].OutputSize];
+                _layers[l].Forward(current, layerOutputs[l]);
+                current = layerOutputs[l];
             }
 
+            // Обчислюємо помилку (MSE)
+            double error = 0;
+            for (int i = 0; i < OutputSize; i++)
+            {
+                double diff = current[i] - target[i];
+                error += diff * diff;
+            }
+            error /= OutputSize;
+
+            // Backpropagation
+            Backpropagate(target);
+
+            // Оновлюємо ваги
+            UpdateWeights();
+
             return error;
+        }
+
+        private void Backpropagate(double[] target)
+        {
+            // Вихідний шар
+            var outputLayer = _layers[_layers.Length - 1];
+            for (int i = 0; i < outputLayer.OutputSize; i++)
+            {
+                double output = outputLayer.Output[i];
+                double error = output - target[i];
+                outputLayer.Delta[i] = error * outputLayer.ActivationDerivative(i);
+            }
+
+            // Приховані шари (зворотний прохід)
+            for (int l = _layers.Length - 2; l >= 0; l--)
+            {
+                var currentLayer = _layers[l];
+                var nextLayer = _layers[l + 1];
+
+                for (int i = 0; i < currentLayer.OutputSize; i++)
+                {
+                    double sum = 0;
+                    for (int j = 0; j < nextLayer.OutputSize; j++)
+                    {
+                        sum += nextLayer.Delta[j] * nextLayer.Weights[i, j];
+                    }
+                    currentLayer.Delta[i] = sum * currentLayer.ActivationDerivative(i);
+                }
+            }
+        }
+
+        private void UpdateWeights()
+        {
+            _timestep++;
+
+            if (Optimizer == OptimizerType.Adam)
+                UpdateWeightsAdam();
+            else
+                UpdateWeightsSGD();
+        }
+
+        private void UpdateWeightsSGD()
+        {
+            foreach (var layer in _layers)
+            {
+                for (int i = 0; i < layer.InputSize; i++)
+                {
+                    for (int j = 0; j < layer.OutputSize; j++)
+                    {
+                        double gradient = layer.Input[i] * layer.Delta[j];
+
+                        // L2 регуляризація
+                        gradient += L2Regularization * layer.Weights[i, j];
+
+                        // Gradient clipping
+                        gradient = Math.Max(-GradientClipValue, Math.Min(GradientClipValue, gradient));
+
+                        double velocity = Momentum * layer.WeightVelocity[i, j] - LearningRate * gradient;
+                        layer.WeightVelocity[i, j] = velocity;
+                        layer.Weights[i, j] += velocity;
+                    }
+                }
+
+                for (int j = 0; j < layer.OutputSize; j++)
+                {
+                    double gradient = layer.Delta[j];
+                    gradient = Math.Max(-GradientClipValue, Math.Min(GradientClipValue, gradient));
+
+                    double velocity = Momentum * layer.BiasVelocity[j] - LearningRate * gradient;
+                    layer.BiasVelocity[j] = velocity;
+                    layer.Biases[j] += velocity;
+                }
+            }
+        }
+
+        private void UpdateWeightsAdam()
+        {
+            double beta1_t = Math.Pow(Beta1, _timestep);
+            double beta2_t = Math.Pow(Beta2, _timestep);
+            double lr_t = LearningRate * Math.Sqrt(1 - beta2_t) / (1 - beta1_t);
+
+            foreach (var layer in _layers)
+            {
+                for (int i = 0; i < layer.InputSize; i++)
+                {
+                    for (int j = 0; j < layer.OutputSize; j++)
+                    {
+                        double gradient = layer.Input[i] * layer.Delta[j];
+                        gradient += L2Regularization * layer.Weights[i, j];
+                        gradient = Math.Max(-GradientClipValue, Math.Min(GradientClipValue, gradient));
+
+                        layer.WeightM[i, j] = Beta1 * layer.WeightM[i, j] + (1 - Beta1) * gradient;
+                        layer.WeightV[i, j] = Beta2 * layer.WeightV[i, j] + (1 - Beta2) * gradient * gradient;
+
+                        layer.Weights[i, j] -= lr_t * layer.WeightM[i, j] / (Math.Sqrt(layer.WeightV[i, j]) + Epsilon);
+                    }
+                }
+
+                for (int j = 0; j < layer.OutputSize; j++)
+                {
+                    double gradient = layer.Delta[j];
+                    gradient = Math.Max(-GradientClipValue, Math.Min(GradientClipValue, gradient));
+
+                    layer.BiasM[j] = Beta1 * layer.BiasM[j] + (1 - Beta1) * gradient;
+                    layer.BiasV[j] = Beta2 * layer.BiasV[j] + (1 - Beta2) * gradient * gradient;
+
+                    layer.Biases[j] -= lr_t * layer.BiasM[j] / (Math.Sqrt(layer.BiasV[j]) + Epsilon);
+                }
+            }
         }
 
         public bool[] ToActions(float[] outputs, float threshold = 0.5f)
         {
             bool[] actions = new bool[outputs.Length];
-            for (int i = 0; i < outputs.Length; i++) actions[i] = outputs[i] >= threshold;
+            for (int i = 0; i < outputs.Length; i++)
+                actions[i] = outputs[i] >= threshold;
             return actions;
         }
 
         public void Save(string path)
         {
             if (string.IsNullOrEmpty(path)) throw new ArgumentNullException(nameof(path));
-            lock (_lock)
+
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+
+            lock (_trainingLock)
             {
-                _network.Save(path);
+                using (var writer = new BinaryWriter(File.Open(path, FileMode.Create)))
+                {
+                    // Header
+                    writer.Write(InputSize);
+                    writer.Write(OutputSize);
+                    writer.Write(_layers.Length);
+
+                    // Layers
+                    foreach (var layer in _layers)
+                    {
+                        writer.Write(layer.InputSize);
+                        writer.Write(layer.OutputSize);
+                        writer.Write((int)layer.Activation);
+
+                        for (int i = 0; i < layer.InputSize; i++)
+                            for (int j = 0; j < layer.OutputSize; j++)
+                                writer.Write(layer.Weights[i, j]);
+
+                        for (int j = 0; j < layer.OutputSize; j++)
+                            writer.Write(layer.Biases[j]);
+                    }
+                }
             }
-            Debug.Log($"[NeuralNet] Saved network to: {path}");
+
+            Debug.Log($"[NeuralNet] Збережено в: {path}");
         }
 
         public static NeuralNet Load(string path)
         {
-            if (!File.Exists(path)) throw new FileNotFoundException(path);
+            if (!File.Exists(path)) throw new FileNotFoundException($"Файл не знайдено: {path}");
 
-            var net = Network.Load(path) as ActivationNetwork;
-            if (net == null) throw new InvalidDataException("Saved file is not an ActivationNetwork or incompatible version.");
-
-            var wrapper = new NeuralNet(net.InputsCount, net.Layers[net.Layers.Length - 1].Neurons.Length);
-            lock (wrapper._lock)
+            using (var reader = new BinaryReader(File.Open(path, FileMode.Open)))
             {
-                wrapper._network = net;
-                wrapper._teacher = new BackPropagationLearning(wrapper._network)
-                {
-                    LearningRate = wrapper.LearningRate,
-                    Momentum = wrapper.Momentum
-                };
-            }
+                // Читаємо header
+                int inputSize = reader.ReadInt32();
+                int outputSize = reader.ReadInt32();
+                int layerCount = reader.ReadInt32();
 
-            Debug.Log($"[NeuralNet] Loaded network from: {path}");
-            return wrapper;
+                // Визначаємо розміри прихованих шарів
+                var hiddenSizes = new List<int>();
+                long startPos = reader.BaseStream.Position;
+
+                for (int l = 0; l < layerCount - 1; l++)
+                {
+                    reader.ReadInt32(); // inputSize
+                    int outSize = reader.ReadInt32();
+                    int activation = reader.ReadInt32();
+                    hiddenSizes.Add(outSize);
+
+                    // Пропускаємо ваги та bias
+                    int inSize = l == 0 ? inputSize : hiddenSizes[l - 1];
+                    reader.BaseStream.Position += (inSize * outSize + outSize) * sizeof(double);
+                }
+
+                // Створюємо мережу
+                var net = new NeuralNet(inputSize, outputSize, hiddenSizes.ToArray());
+
+                // Повертаємося до початку даних
+                reader.BaseStream.Position = startPos;
+
+                // Завантажуємо ваги
+                lock (net._trainingLock)
+                {
+                    foreach (var layer in net._layers)
+                    {
+                        reader.ReadInt32(); // inputSize
+                        reader.ReadInt32(); // outputSize
+                        reader.ReadInt32(); // activation
+
+                        for (int i = 0; i < layer.InputSize; i++)
+                            for (int j = 0; j < layer.OutputSize; j++)
+                                layer.Weights[i, j] = reader.ReadDouble();
+
+                        for (int j = 0; j < layer.OutputSize; j++)
+                            layer.Biases[j] = reader.ReadDouble();
+                    }
+                }
+
+                Debug.Log($"[NeuralNet] Завантажено з: {path}");
+                return net;
+            }
         }
 
         public void ClearBuffer()
         {
-            lock (_lock)
+            lock (_trainingLock)
             {
-                _replayBuffer.Clear();
+                _bufferHead = 0;
+                _bufferCount = 0;
             }
         }
 
-        // ЗМІНЕНО: Спрощено вивід статистики
         public string GetStats()
         {
-            return $"Buffer: {_replayBuffer.Count}/{MAX_BUFFER_SIZE} | " +
-                   $"Total Samples: {TotalSamplesCollected} | " +
-                   $"Error: {LastBatchError:F4}";
-        }
-
-        private static double[] ToDouble(float[] arr)
-        {
-            double[] d = new double[arr.Length];
-            for (int i = 0; i < arr.Length; i++) d[i] = arr[i];
-            return d;
-        }
-
-        private static float[] ToFloat(double[] arr)
-        {
-            float[] f = new float[arr.Length];
-            for (int i = 0; i < arr.Length; i++) f[i] = (float)arr[i];
-            return f;
+            return $"Buffer: {_bufferCount}/{MAX_BUFFER_SIZE} | " +
+                   $"Samples: {TotalSamplesCollected} | " +
+                   $"Error: {LastBatchError:F5} | " +
+                   $"AvgError: {RunningAvgError:F5}";
         }
     }
 }

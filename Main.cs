@@ -204,8 +204,6 @@ namespace SilksongNeuralNetwork
                     var input = DataCollector.GetInputData().ToArray();
                     var target = DataCollector.GetOutputData().ToArray();
 
-                    Logger.LogInfo(string.Join(", ", target));
-
                     var predictedProbabilities = _nn.Predict(input);
                     var predictedActions = _nn.ToActions(predictedProbabilities, 0.3f);
 
@@ -247,7 +245,7 @@ namespace SilksongNeuralNetwork
                             }
                         }
 
-                        if (answers.Count > 0) // Логуємо тільки якщо є дії
+                        if (answers.Count > 0)
                         {
                             Logger.LogInfo($"Bot actions: {string.Join(" ", answers)}");
                         }
@@ -264,30 +262,7 @@ namespace SilksongNeuralNetwork
                         Logger.LogInfo($"TRAINING MODE: {_isTrainingMode}");
                     }
 
-                    if (Input.GetKeyDown(KeyCode.Q))
-                    {
-                        // Очистити буфер (якщо хочеш почати навчання заново)
-                        _nn.ClearBuffer();
-                        Logger.LogInfo("Replay buffer cleared!");
-                    }
-
-                    if (Input.GetKey(KeyCode.T))
-                    {
-                        // Показати статистику
-                        Logger.LogInfo($"[Stats] {_nn.GetStats()}");
-                    }
-
-                    if (Input.GetKey(KeyCode.G))
-                    {
-                        var allObjects = GameObject.FindObjectsOfType<GameObject>();
-                        var usedLayers = new HashSet<int>(allObjects.Select(obj => obj.layer));
-                        foreach (var layer in usedLayers)
-                        {
-                            Logger.LogInfo($"Layer {layer}: {LayerMask.LayerToName(layer)}");
-                        }
-                    }
-
-                    if (Input.GetKey(KeyCode.E))
+                    if (Input.GetKey(KeyCode.L))
                     {
                         for (int i = 0; i < 32; i++)
                         {
@@ -306,15 +281,18 @@ namespace SilksongNeuralNetwork
                         }
                     }
 
-                    if (Input.GetKeyDown(KeyCode.F11))
+                    if (Input.GetKeyDown(KeyCode.G))
                     {
-                        _nn.Save("SilksongNN.bin");
+                        string modelPath = Path.Combine(Application.persistentDataPath, "model", "SilksongNN.bin");
+                        _nn.Save(modelPath);
+                        _nn = NeuralNet.Load(modelPath);
                         Logger.LogInfo("Model saved!");
                     }
 
-                    if (Input.GetKeyDown(KeyCode.F12))
+                    if (Input.GetKeyDown(KeyCode.Q))
                     {
-                        _nn = NeuralNet.Load("SilksongNN.bin");
+                        string modelPath = Path.Combine(Application.persistentDataPath, "model", "SilksongNN.bin");
+                        _nn = NeuralNet.Load(modelPath);    
                         Logger.LogInfo("Model loaded!");
                     }
                 }

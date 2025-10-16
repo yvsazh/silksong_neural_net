@@ -38,8 +38,8 @@ namespace SilksongNeuralNetwork
 
         public static readonly GameAction GoLeft = new GameAction(2, "Go Left", () =>
         {
-            InputSimulator.PressRight();
-            InputSimulator.ReleaseRight();
+            InputSimulator.PressLeft();
+            InputSimulator.ReleaseLeft();
         });
 
         /*
