@@ -366,7 +366,7 @@ namespace SilksongNeuralNetwork
             // ЗВИЧАЙНА АТАКА - середній пріоритет
             if (target[4] > 0.5f)
             {
-                priority *= 3.0f;
+                priority *= 5.0f;
             }
 
             // DOWN ATTACK - високий пріоритет (pogo - важлива техніка)
@@ -384,13 +384,13 @@ namespace SilksongNeuralNetwork
             // CAST/BIND - дуже високий пріоритет (лікування/зцілення)
             if (target[7] > 0.5f)
             {
-                priority *= 7.0f;
+                priority *= 10.0f;
             }
 
             // MAIN ABILITY (A Sphere) - високий пріоритет
             if (target[8] > 0.5f)
             {
-                priority *= 5.0f;
+                priority *= 10.0f;
             }
 
             // FIRST TOOL - дуже високий пріоритет
@@ -408,7 +408,7 @@ namespace SilksongNeuralNetwork
             // HARPOON DASH - максимальний пріоритет (дуже рідкісна і потужна механіка)
             if (target[11] > 0.5f)
             {
-                priority *= 8.0f;
+                priority *= 10.0f;
             }
 
             return priority;
