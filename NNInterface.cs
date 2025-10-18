@@ -15,8 +15,6 @@ namespace SilksongNeuralNetwork
         private Vector2 _scrollPosition = Vector2.zero;
 
         // UI стилі
-        private GUIStyle _backgroundStyle;
-        private GUIStyle _overlayStyle;
         private GUIStyle _titleStyle;
         private GUIStyle _buttonStyle;
         private GUIStyle _textFieldStyle;
@@ -35,21 +33,11 @@ namespace SilksongNeuralNetwork
         {
             if (_stylesInitialized) return;
 
-            // Напівпрозорий оверлей на весь екран
-            _overlayStyle = new GUIStyle();
-            _overlayStyle.normal.background = MakeTexture(2, 2, new Color(0f, 0f, 0f, 0.7f));
-
-            // Фон діалогу (непрозорий)
-            _backgroundStyle = new GUIStyle(GUI.skin.box);
-            _backgroundStyle.normal.background = MakeTexture(2, 2, new Color(0.15f, 0.15f, 0.2f, 1f));
-            _backgroundStyle.border = new RectOffset(8, 8, 8, 8);
-            _backgroundStyle.padding = new RectOffset(20, 20, 20, 20);
-
             // Заголовок
             _titleStyle = new GUIStyle(GUI.skin.label);
             _titleStyle.fontSize = 24;
             _titleStyle.fontStyle = FontStyle.Bold;
-            _titleStyle.normal.textColor = new Color(1f, 0.95f, 0.8f);
+            _titleStyle.normal.textColor = Color.white;
             _titleStyle.alignment = TextAnchor.MiddleCenter;
             _titleStyle.padding = new RectOffset(0, 0, 10, 15);
 
@@ -57,38 +45,30 @@ namespace SilksongNeuralNetwork
             _buttonStyle = new GUIStyle(GUI.skin.button);
             _buttonStyle.fontSize = 16;
             _buttonStyle.fontStyle = FontStyle.Bold;
-            _buttonStyle.normal.background = MakeTexture(2, 2, new Color(0.3f, 0.27f, 0.25f, 1f));
-            _buttonStyle.hover.background = MakeTexture(2, 2, new Color(0.4f, 0.37f, 0.33f, 1f));
-            _buttonStyle.active.background = MakeTexture(2, 2, new Color(0.5f, 0.47f, 0.4f, 1f));
-            _buttonStyle.normal.textColor = new Color(0.95f, 0.9f, 0.8f);
-            _buttonStyle.hover.textColor = Color.white;
+            _buttonStyle.normal.textColor = Color.white;
+            _buttonStyle.hover.textColor = Color.yellow;
             _buttonStyle.padding = new RectOffset(12, 12, 10, 10);
             _buttonStyle.margin = new RectOffset(5, 5, 5, 5);
-            _buttonStyle.border = new RectOffset(4, 4, 4, 4);
 
             // Текстове поле
             _textFieldStyle = new GUIStyle(GUI.skin.textField);
             _textFieldStyle.fontSize = 18;
-            _textFieldStyle.normal.background = MakeTexture(2, 2, new Color(0.2f, 0.2f, 0.25f, 1f));
             _textFieldStyle.normal.textColor = Color.white;
-            _textFieldStyle.focused.background = MakeTexture(2, 2, new Color(0.25f, 0.25f, 0.3f, 1f));
             _textFieldStyle.focused.textColor = Color.white;
-            _textFieldStyle.hover.background = MakeTexture(2, 2, new Color(0.22f, 0.22f, 0.27f, 1f));
             _textFieldStyle.padding = new RectOffset(10, 10, 8, 8);
             _textFieldStyle.margin = new RectOffset(0, 0, 5, 10);
-            _textFieldStyle.border = new RectOffset(4, 4, 4, 4);
 
             // Лейбл
             _labelStyle = new GUIStyle(GUI.skin.label);
             _labelStyle.fontSize = 16;
-            _labelStyle.normal.textColor = new Color(0.9f, 0.85f, 0.75f);
+            _labelStyle.normal.textColor = Color.white;
             _labelStyle.padding = new RectOffset(0, 0, 5, 5);
 
             // Текст режиму
             _modeTextStyle = new GUIStyle(GUI.skin.label);
             _modeTextStyle.fontSize = 16;
             _modeTextStyle.fontStyle = FontStyle.Bold;
-            _modeTextStyle.normal.textColor = new Color(1f, 0.95f, 0.8f);
+            _modeTextStyle.normal.textColor = Color.yellow;
             _modeTextStyle.alignment = TextAnchor.LowerRight;
             _modeTextStyle.padding = new RectOffset(0, 15, 0, 15);
 
@@ -97,18 +77,6 @@ namespace SilksongNeuralNetwork
             _scrollViewStyle.padding = new RectOffset(5, 5, 5, 5);
 
             _stylesInitialized = true;
-        }
-
-        private Texture2D MakeTexture(int width, int height, Color color)
-        {
-            Color[] pixels = new Color[width * height];
-            for (int i = 0; i < pixels.Length; i++)
-                pixels[i] = color;
-
-            Texture2D texture = new Texture2D(width, height);
-            texture.SetPixels(pixels);
-            texture.Apply();
-            return texture;
         }
 
         private void OnGUI()
@@ -138,18 +106,26 @@ namespace SilksongNeuralNetwork
 
         private void DrawOverlay()
         {
-            // Напівпрозорий чорний фон на весь екран
-            GUI.Box(new Rect(0, 0, Screen.width, Screen.height), "", _overlayStyle);
+            // Малюємо напівпрозорий чорний прямокутник на весь екран
+            Color oldColor = GUI.color;
+            GUI.color = new Color(0, 0, 0, 0.8f);
+            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
+            GUI.color = oldColor;
         }
 
         private void DrawModeIndicator()
         {
             float width = 280f;
             float height = 50f;
+            float padding = 10f;
             Rect modeRect = new Rect(Screen.width - width - 20, Screen.height - height - 20, width, height);
 
-            // Невеликий фон для тексту режиму
-            GUI.Box(modeRect, "", _backgroundStyle);
+            // Фон для індикатора режиму
+            Color oldColor = GUI.color;
+            GUI.color = new Color(0.1f, 0.1f, 0.1f, 0.7f);
+            GUI.DrawTexture(modeRect, Texture2D.whiteTexture);
+            GUI.color = oldColor;
+
             GUI.Label(modeRect, _modeText, _modeTextStyle);
         }
 
@@ -161,6 +137,8 @@ namespace SilksongNeuralNetwork
 
             float dialogWidth = 550f;
             float dialogHeight = 280f;
+            float padding = 20f;
+
             Rect dialogRect = new Rect(
                 (Screen.width - dialogWidth) / 2,
                 (Screen.height - dialogHeight) / 2,
@@ -168,9 +146,18 @@ namespace SilksongNeuralNetwork
                 dialogHeight
             );
 
-            GUI.Box(dialogRect, "", _backgroundStyle);
+            // Малюємо фон діалогу
+            DrawDialogBackground(dialogRect);
 
-            GUILayout.BeginArea(new Rect(dialogRect.x, dialogRect.y, dialogRect.width, dialogRect.height));
+            // Внутрішня область з відступами
+            Rect contentRect = new Rect(
+                dialogRect.x + padding,
+                dialogRect.y + padding,
+                dialogRect.width - padding * 2,
+                dialogRect.height - padding * 2
+            );
+
+            GUILayout.BeginArea(contentRect);
             GUILayout.BeginVertical();
 
             // Заголовок
@@ -241,6 +228,8 @@ namespace SilksongNeuralNetwork
 
             float dialogWidth = 650f;
             float dialogHeight = 550f;
+            float padding = 20f;
+
             Rect dialogRect = new Rect(
                 (Screen.width - dialogWidth) / 2,
                 (Screen.height - dialogHeight) / 2,
@@ -248,9 +237,18 @@ namespace SilksongNeuralNetwork
                 dialogHeight
             );
 
-            GUI.Box(dialogRect, "", _backgroundStyle);
+            // Малюємо фон діалогу
+            DrawDialogBackground(dialogRect);
 
-            GUILayout.BeginArea(new Rect(dialogRect.x, dialogRect.y, dialogRect.width, dialogRect.height));
+            // Внутрішня область з відступами
+            Rect contentRect = new Rect(
+                dialogRect.x + padding,
+                dialogRect.y + padding,
+                dialogRect.width - padding * 2,
+                dialogRect.height - padding * 2
+            );
+
+            GUILayout.BeginArea(contentRect);
             GUILayout.BeginVertical();
 
             // Заголовок
@@ -303,9 +301,16 @@ namespace SilksongNeuralNetwork
 
             GUILayout.Space(15);
 
-            // Кнопка закриття
+            // Кнопки
             GUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
+
+            if (GUILayout.Button("Відкрити папку", _buttonStyle, GUILayout.Width(180), GUILayout.Height(45)))
+            {
+                OpenModelsFolder();
+            }
+
+            GUILayout.Space(15);
 
             if (GUILayout.Button("Закрити", _buttonStyle, GUILayout.Width(180), GUILayout.Height(45)))
             {
@@ -317,6 +322,21 @@ namespace SilksongNeuralNetwork
 
             GUILayout.EndVertical();
             GUILayout.EndArea();
+        }
+
+        private void DrawDialogBackground(Rect rect)
+        {
+            // Темна рамка (бордер)
+            Color oldColor = GUI.color;
+            GUI.color = new Color(0.2f, 0.2f, 0.25f, 1f);
+            GUI.DrawTexture(rect, Texture2D.whiteTexture);
+
+            // Світліший внутрішній фон
+            Rect innerRect = new Rect(rect.x + 3, rect.y + 3, rect.width - 6, rect.height - 6);
+            GUI.color = new Color(0.15f, 0.15f, 0.2f, 1f);
+            GUI.DrawTexture(innerRect, Texture2D.whiteTexture);
+
+            GUI.color = oldColor;
         }
 
         private string[] GetModelFiles()
@@ -339,6 +359,46 @@ namespace SilksongNeuralNetwork
         {
             Cursor.visible = false;
             Cursor.lockState = CursorLockMode.Locked;
+        }
+
+        private void OpenModelsFolder()
+        {
+            string modelsPath = Agent.ModelsPath;
+
+            // Створюємо папку якщо не існує
+            if (!Directory.Exists(modelsPath))
+            {
+                Directory.CreateDirectory(modelsPath);
+            }
+
+            try
+            {
+                // Відкриваємо папку в провіднику
+                System.Diagnostics.Process.Start(modelsPath);
+            }
+            catch (Exception ex)
+            {
+                // Якщо не вдалося відкрити стандартним способом, пробуємо альтернативні методи
+                try
+                {
+                    if (Application.platform == RuntimePlatform.WindowsPlayer || Application.platform == RuntimePlatform.WindowsEditor)
+                    {
+                        System.Diagnostics.Process.Start("explorer.exe", modelsPath);
+                    }
+                    else if (Application.platform == RuntimePlatform.OSXPlayer || Application.platform == RuntimePlatform.OSXEditor)
+                    {
+                        System.Diagnostics.Process.Start("open", modelsPath);
+                    }
+                    else if (Application.platform == RuntimePlatform.LinuxPlayer || Application.platform == RuntimePlatform.LinuxEditor)
+                    {
+                        System.Diagnostics.Process.Start("xdg-open", modelsPath);
+                    }
+                }
+                catch
+                {
+                    Debug.LogError($"Не вдалося відкрити папку: {modelsPath}\nПомилка: {ex.Message}");
+                }
+            }
         }
 
         private void SaveAndClose()
