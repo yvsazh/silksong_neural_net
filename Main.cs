@@ -17,11 +17,17 @@ using System.Runtime.InteropServices;
 
 using UnityEngine;
 
-
 using static SilksongNeuralNetwork.Utils;
 
 namespace SilksongNeuralNetwork
 {
+    public enum AgentMode
+    {
+        Disabled,      // Тренування вимкнене
+        Training,      // Тренування активне
+        Inference      // Нейромережа грає
+    }
+
     [BepInPlugin("com.hackwhiz.nnagent", "Neural Net Agent for Silksong", "1.0.0")]
     public class Agent : BaseUnityPlugin
     {
@@ -39,11 +45,14 @@ namespace SilksongNeuralNetwork
         public ListenForCast castAction;
 
         private NeuralNet _nn;
-        private bool _isTrainingMode = true;
+        private AgentMode _currentMode = AgentMode.Disabled;
+        private string _currentModelName = null;
 
         private SceneBounds sceneBoundsInstance;
-
         private FunctionLogger _functionLogger;
+        private NNInterface _interface;
+
+        public static string ModelsPath => Path.Combine(Application.persistentDataPath, "models");
 
         private void Awake()
         {
@@ -51,19 +60,22 @@ namespace SilksongNeuralNetwork
 
             Instance = this;
 
+            // Створюємо папку для моделей
+            if (!Directory.Exists(ModelsPath))
+            {
+                Directory.CreateDirectory(ModelsPath);
+            }
+
             _functionLogger = new FunctionLogger(
                 "com.hackwhiz.nnagent.functionlogger",
                 Path.Combine(Paths.GameRootPath, "function_logs.txt"),
                 Logger
             );
 
-            // Перевіряємо, чи існує SceneBoundsManager в сцені.
-            // Якщо ні, створюємо його.
             if (SceneBounds.Instance == null)
             {
                 GameObject sceneBoundsObject = new GameObject("SceneBoundsManager");
                 sceneBoundsInstance = sceneBoundsObject.AddComponent<SceneBounds>();
-                // Зробіть його постійним між завантаженнями сцен, якщо потрібно
                 DontDestroyOnLoad(sceneBoundsObject);
             }
             else
@@ -73,6 +85,11 @@ namespace SilksongNeuralNetwork
 
             hero = GameObject.FindFirstObjectByType<HeroController>();
             Harmony.CreateAndPatchAll(typeof(Agent), null);
+
+            // Створюємо інтерфейс
+            GameObject interfaceObj = new GameObject("NNInterface");
+            _interface = interfaceObj.AddComponent<NNInterface>();
+            DontDestroyOnLoad(interfaceObj);
         }
 
         private bool Initialize()
@@ -113,27 +130,22 @@ namespace SilksongNeuralNetwork
                         return false;
                     }
 
-                    if(myInputActions != null)
+                    if (myInputActions != null)
                     {
-                        // Отримуємо розміри входу та виходу з DataCollector
                         var inputData = DataCollector.GetInputData();
                         var outputData = DataCollector.GetOutputData();
 
-                        // Створюємо екземпляр нейронної мережі
                         _nn = new NeuralNet(inputData.Count, outputData.Count);
                         Logger.LogInfo($"NeuralNet created with {inputData.Count} inputs and {outputData.Count} outputs.");
                     }
 
                     initialized = true;
-                    
+
                     Logger.LogInfo("Agent initialized successfully.");
 
-                    // FIND ALL ACTIONS
                     fsms = hero.GetComponents<PlayMakerFSM>();
-                    Logger.LogInfo(fsms);
                     Logger.LogInfo($"Found {fsms.Length} FSMs on hero");
 
-                    // FIND LISTENFORCAST
                     castAction = null;
                     foreach (var fsm in fsms)
                     {
@@ -177,11 +189,9 @@ namespace SilksongNeuralNetwork
         [HarmonyPatch(typeof(GameManager), "BeginScene")]
         public static void SceneLoadPostFix()
         {
-            
-            // Тепер використовуємо sceneBoundsInstance, який буде ініціалізовано
             if (Instance.sceneBoundsInstance != null)
             {
-                Instance.sceneBoundsInstance.UpdateBounds(); // THIS DON'T REALLY WORKS!!
+                Instance.sceneBoundsInstance.UpdateBounds();
                 Instance.Logger.LogInfo($"UPDATED BOUNDS. MinX: {Instance.sceneBoundsInstance.minX}, MaxX: {Instance.sceneBoundsInstance.maxX}");
             }
             else
@@ -208,95 +218,163 @@ namespace SilksongNeuralNetwork
                     var predictedActions = _nn.ToActions(predictedProbabilities, 0.3f);
 
                     hero.AddSilk(999, false);
-                    if (_isTrainingMode)
+
+                    // Обробка режимів
+                    switch (_currentMode)
                     {
-                        // TRAINING MODE: Збираємо досвід і навчаємось на батчах
-
-                        bool playerDidAction = target.Any(actionValue => actionValue > 0.5f);
-
-                        // ЗМІНЕНО: Ми збираємо досвід і навчаємо мережу ТІЛЬКИ якщо гравець щось зробив.
-                        if (playerDidAction)
-                        {
-                            // Збираємо досвід
-                            _nn.CollectExperience(input, target);
-
-                            // Навчаємось на батчах (метод сам контролює частоту навчання)
-                            double error = _nn.TrainBatch();
-
-                            // Логуємо статистику кожні 100 кадрів
-                            if (Time.frameCount % 100 == 0)
-                            {
-                                Logger.LogInfo($"[NeuralNet] {_nn.GetStats()}");
-                                Logger.LogInfo($"[NeuralNet] Prediction: {string.Join(",", predictedActions)} | Real Action: {string.Join(",", target)}");
-                            }
-                        }
-                    }
-                    else
-                    {
-                        // BOT MODE: Бот грає
-
-                        List<int> answers = new List<int>();
-
-                        for (int i = 0; i < predictedActions.Length; i++)
-                        {
-                            if (predictedActions[i])
-                            {
-                                answers.Add(i);
-                            }
-                        }
-
-                        if (answers.Count > 0)
-                        {
-                            Logger.LogInfo($"Bot actions: {string.Join(" ", answers)}");
-                        }
-
-                        foreach (var answerId in answers)
-                        {
-                            GameAction.GetById(answerId + 1).Execute();
-                        }
-                    }
-                    // HOTKEYS
-                    if (Input.GetKeyDown(KeyCode.W))
-                    {
-                        _isTrainingMode = !_isTrainingMode;
-                        Logger.LogInfo($"TRAINING MODE: {_isTrainingMode}");
+                        case AgentMode.Training:
+                            HandleTrainingMode(input, target, predictedActions);
+                            break;
+                        case AgentMode.Inference:
+                            HandleInferenceMode(predictedActions);
+                            break;
+                        case AgentMode.Disabled:
+                            // Нічого не робимо
+                            break;
                     }
 
-                    if (Input.GetKey(KeyCode.L))
-                    {
-                        for (int i = 0; i < 32; i++)
-                        {
-                            string layerName = LayerMask.LayerToName(i);
-                            if (!string.IsNullOrEmpty(layerName))
-                                Logger.LogInfo($"Layer {i}: {layerName}");
-                        }
-                    }
-
-
-                    if (Input.GetKeyDown(KeyCode.R))
-                    {
-                        if (DebugTools.Instance != null)
-                        {
-                            DebugTools.Instance.Visible = !DebugTools.Instance.Visible;
-                        }
-                    }
-
-                    if (Input.GetKeyDown(KeyCode.G))
-                    {
-                        string modelPath = Path.Combine(Application.persistentDataPath, "model", "SilksongNN.bin");
-                        _nn.Save(modelPath);
-                        _nn = NeuralNet.Load(modelPath);
-                        Logger.LogInfo("Model saved!");
-                    }
-
-                    if (Input.GetKeyDown(KeyCode.Q))
-                    {
-                        string modelPath = Path.Combine(Application.persistentDataPath, "model", "SilksongNN.bin");
-                        _nn = NeuralNet.Load(modelPath);    
-                        Logger.LogInfo("Model loaded!");
-                    }
+                    HandleHotkeys();
                 }
             }
+        }
+
+        private void HandleTrainingMode(float[] input, float[] target, bool[] predictedActions)
+        {
+            bool playerDidAction = target.Any(actionValue => actionValue > 0.5f);
+
+            if (playerDidAction)
+            {
+                _nn.CollectExperience(input, target);
+                double error = _nn.TrainBatch();
+
+                if (Time.frameCount % 100 == 0)
+                {
+                    Logger.LogInfo($"[NeuralNet] {_nn.GetStats()}");
+                    Logger.LogInfo($"[NeuralNet] Prediction: {string.Join(",", predictedActions)} | Real Action: {string.Join(",", target)}");
+                }
+            }
+        }
+
+        private void HandleInferenceMode(bool[] predictedActions)
+        {
+            List<int> answers = new List<int>();
+
+            for (int i = 0; i < predictedActions.Length; i++)
+            {
+                if (predictedActions[i])
+                {
+                    answers.Add(i);
+                }
+            }
+
+            if (answers.Count > 0)
+            {
+                Logger.LogInfo($"Bot actions: {string.Join(" ", answers)}");
+            }
+
+            foreach (var answerId in answers)
+            {
+                GameAction.GetById(answerId + 1).Execute();
+            }
+        }
+
+        private void HandleHotkeys()
+        {
+            // W - зміна режиму
+            if (Input.GetKeyDown(KeyCode.W))
+            {
+                CycleMode();
+            }
+
+            // G - відкрити меню збереження
+            if (Input.GetKeyDown(KeyCode.E))
+            {
+                _interface.ShowSaveDialog();
+            }
+
+            // Q - відкрити меню завантаження
+            if (Input.GetKeyDown(KeyCode.R))
+            {
+                _interface.ShowLoadDialog();
+            }
+
+            // F - швидке збереження (перезаписати поточну модель)
+            if (Input.GetKeyDown(KeyCode.Y) && !string.IsNullOrEmpty(_currentModelName))
+            {
+                SaveModel(_currentModelName);
+                Logger.LogInfo($"Model '{_currentModelName}' quick saved!");
+            }
+
+            // Debug hotkeys
+            if (Input.GetKeyDown(KeyCode.L))
+            {
+                if (DebugTools.Instance != null)
+                {
+                    DebugTools.Instance.Visible = !DebugTools.Instance.Visible;
+                }
+            }
+
+            if (Input.GetKey(KeyCode.L))
+            {
+                for (int i = 0; i < 32; i++)
+                {
+                    string layerName = LayerMask.LayerToName(i);
+                    if (!string.IsNullOrEmpty(layerName))
+                        Logger.LogInfo($"Layer {i}: {layerName}");
+                }
+            }
+        }
+
+        private void CycleMode()
+        {
+            _currentMode = (AgentMode)(((int)_currentMode + 1) % 3);
+            Logger.LogInfo($"Mode changed to: {_currentMode}");
+            _interface.UpdateModeText(_currentMode);
+        }
+
+        public void SaveModel(string modelName)
+        {
+            if (_nn == null)
+            {
+                Logger.LogWarning("Cannot save: Neural network is not initialized");
+                return;
+            }
+
+            string modelPath = Path.Combine(ModelsPath, $"{modelName}.bin");
+            _nn.Save(modelPath);
+            _currentModelName = modelName;
+            Logger.LogInfo($"Model saved as '{modelName}'");
+        }
+
+        public void LoadModel(string modelName)
+        {
+            if (_nn == null)
+            {
+                Logger.LogWarning("Cannot load: Neural network is not initialized");
+                return;
+            }
+
+            string modelPath = Path.Combine(ModelsPath, $"{modelName}.bin");
+            if (File.Exists(modelPath))
+            {
+                _nn = NeuralNet.Load(modelPath);
+                _currentModelName = modelName;
+                Logger.LogInfo($"Model '{modelName}' loaded!");
+            }
+            else
+            {
+                Logger.LogError($"Model file not found: {modelPath}");
+            }
+        }
+
+        public AgentMode GetCurrentMode()
+        {
+            return _currentMode;
+        }
+
+        public string GetCurrentModelName()
+        {
+            return _currentModelName ?? "Без назви";
         }
     }
 }
