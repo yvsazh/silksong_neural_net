@@ -23,11 +23,39 @@ namespace SilksongNeuralNetwork
         private GUIStyle _scrollViewStyle;
         private bool _stylesInitialized = false;
 
-        private string _modeText = "Тренування вимкнене";
+        private string _modeText = "";
 
         // Для фокусу на TextField
         private string _textFieldControlName = "ModelNameField";
         private bool _shouldFocusTextField = false;
+
+        // Для відстеження зміни мови
+        private TeamCherry.Localization.LanguageCode _lastLanguageCode;
+
+        private void Start()
+        {
+            // Ініціалізуємо мову при старті
+            UpdateLanguage();
+        }
+
+        private void Update()
+        {
+            // Перевіряємо зміну мови
+            var currentLanguage = TeamCherry.Localization.Language.CurrentLanguage();
+            if (currentLanguage != _lastLanguageCode)
+            {
+                UpdateLanguage();
+            }
+        }
+
+        private void UpdateLanguage()
+        {
+            _lastLanguageCode = TeamCherry.Localization.Language.CurrentLanguage();
+            UILocalization.SetLanguageFromCode(_lastLanguageCode);
+
+            // Оновлюємо текст режиму
+            UpdateModeText(Agent.Instance._currentMode);
+        }
 
         private void InitializeStyles()
         {
@@ -161,11 +189,11 @@ namespace SilksongNeuralNetwork
             GUILayout.BeginVertical();
 
             // Заголовок
-            GUILayout.Label("Зберегти модель", _titleStyle);
+            GUILayout.Label(UILocalization.Get("save_title"), _titleStyle);
             GUILayout.Space(15);
 
             // Поле введення
-            GUILayout.Label("Назва моделі:", _labelStyle);
+            GUILayout.Label(UILocalization.Get("model_name_label"), _labelStyle);
             GUILayout.Space(5);
 
             GUI.SetNextControlName(_textFieldControlName);
@@ -201,14 +229,14 @@ namespace SilksongNeuralNetwork
             GUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
 
-            if (GUILayout.Button("Зберегти", _buttonStyle, GUILayout.Width(160), GUILayout.Height(45)))
+            if (GUILayout.Button(UILocalization.Get("save_button"), _buttonStyle, GUILayout.Width(160), GUILayout.Height(45)))
             {
                 SaveAndClose();
             }
 
             GUILayout.Space(15);
 
-            if (GUILayout.Button("Скасувати", _buttonStyle, GUILayout.Width(160), GUILayout.Height(45)))
+            if (GUILayout.Button(UILocalization.Get("cancel_button"), _buttonStyle, GUILayout.Width(160), GUILayout.Height(45)))
             {
                 CancelAndClose();
             }
@@ -252,11 +280,11 @@ namespace SilksongNeuralNetwork
             GUILayout.BeginVertical();
 
             // Заголовок
-            GUILayout.Label("Завантажити модель", _titleStyle);
+            GUILayout.Label(UILocalization.Get("load_title"), _titleStyle);
             GUILayout.Space(15);
 
             // Поточна модель
-            GUILayout.Label($"Поточна модель: {Agent.Instance.GetCurrentModelName()}", _labelStyle);
+            GUILayout.Label($"{UILocalization.Get("current_model")} {Agent.Instance.GetCurrentModelName()}", _labelStyle);
             GUILayout.Space(15);
 
             // Escape для закриття
@@ -272,7 +300,7 @@ namespace SilksongNeuralNetwork
             if (modelFiles.Length == 0)
             {
                 GUILayout.Space(20);
-                GUILayout.Label("Моделі не знайдені", _labelStyle);
+                GUILayout.Label(UILocalization.Get("no_models"), _labelStyle);
             }
             else
             {
@@ -305,14 +333,14 @@ namespace SilksongNeuralNetwork
             GUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
 
-            if (GUILayout.Button("Відкрити папку", _buttonStyle, GUILayout.Width(180), GUILayout.Height(45)))
+            if (GUILayout.Button(UILocalization.Get("open_folder_button"), _buttonStyle, GUILayout.Width(180), GUILayout.Height(45)))
             {
                 OpenModelsFolder();
             }
 
             GUILayout.Space(15);
 
-            if (GUILayout.Button("Закрити", _buttonStyle, GUILayout.Width(180), GUILayout.Height(45)))
+            if (GUILayout.Button(UILocalization.Get("close_button"), _buttonStyle, GUILayout.Width(180), GUILayout.Height(45)))
             {
                 CancelAndClose();
             }
@@ -437,13 +465,13 @@ namespace SilksongNeuralNetwork
             switch (mode)
             {
                 case AgentMode.Disabled:
-                    _modeText = "Тренування вимкнене";
+                    _modeText = UILocalization.Get("mode_disabled");
                     break;
                 case AgentMode.Training:
-                    _modeText = "Тренування активне";
+                    _modeText = UILocalization.Get("mode_training");
                     break;
                 case AgentMode.Inference:
-                    _modeText = "Нейромережа грає";
+                    _modeText = UILocalization.Get("mode_inference");
                     break;
             }
         }

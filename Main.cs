@@ -45,7 +45,7 @@ namespace SilksongNeuralNetwork
         public ListenForCast castAction;
 
         private NeuralNet _nn;
-        private AgentMode _currentMode = AgentMode.Disabled;
+        public AgentMode _currentMode = AgentMode.Disabled;
         private string _currentModelName = null;
 
         private SceneBounds sceneBoundsInstance;
