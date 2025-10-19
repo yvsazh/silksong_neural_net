@@ -16,7 +16,8 @@ namespace SilksongNeuralNetwork
     {
         Obstacles,  // Для карти/перешкод
         Enemies,     // Для ворогів
-        EnemiesProjectiles,     
+        EnemiesProjectiles,
+        InteractiveObjects,  // Для інтерактивних об'єктів
     }
 
     public static class RaySensorSystem
@@ -36,6 +37,11 @@ namespace SilksongNeuralNetwork
         private static float _enemyProjectilesMaxDistance = 20f;
         private static LayerMask _enemyProjectilesLayerMask;
 
+        // Налаштування для інтерактивних об'єктів
+        private static int _interactiveObjectRayCount = 8;
+        private static float _interactiveObjectMaxDistance = 15f;
+        private static LayerMask _interactiveObjectLayerMask;
+
         private static bool _initialized = false;
 
         // Ініціалізація системи променів
@@ -45,7 +51,9 @@ namespace SilksongNeuralNetwork
             int enemyRayCount = 12,
             float enemyMaxDistance = 20f,
             int enemyProjectilesRayCount = 20,
-            float enemyProjectilesMaxDistance = 20f
+            float enemyProjectilesMaxDistance = 20f,
+            int interactiveObjectRayCount = 8,
+            float interactiveObjectMaxDistance = 15f
             )
         {
             // Налаштування променів для перешкод
@@ -61,6 +69,11 @@ namespace SilksongNeuralNetwork
             _enemyProjectilesRayCount = enemyProjectilesRayCount;
             _enemyProjectilesMaxDistance = enemyProjectilesMaxDistance;
             _enemyProjectilesLayerMask = LayerMask.GetMask("Attack");
+
+            // Налаштування променів для інтерактивних об'єктів
+            _interactiveObjectRayCount = interactiveObjectRayCount;
+            _interactiveObjectMaxDistance = interactiveObjectMaxDistance;
+            _interactiveObjectLayerMask = LayerMask.GetMask("Interactive Object");
 
             _initialized = true;
         }
@@ -163,6 +176,18 @@ namespace SilksongNeuralNetwork
             return CastRaysInternal(origin, _enemyProjectilesRayCount, _enemyProjectilesMaxDistance, _enemyProjectilesLayerMask, RaySensorType.EnemiesProjectiles, Agent.Instance.hero.gameObject);
         }
 
+        // Отримання даних з променів для інтерактивних об'єктів
+        public static List<RaySensorData> CastInteractiveObjectRays(Vector2 origin)
+        {
+            if (!_initialized)
+            {
+                Initialize();
+            }
+
+            return CastRaysInternal(origin, _interactiveObjectRayCount, _interactiveObjectMaxDistance, 
+                _interactiveObjectLayerMask, RaySensorType.InteractiveObjects);
+        }
+
         // Отримання даних у вигляді списку float для нейромережі (перешкоди)
         public static List<float> GetObstacleRaySensorFloatData(Vector2 origin)
         {
@@ -204,6 +229,19 @@ namespace SilksongNeuralNetwork
             return floatData;
         }
 
+        public static List<float> GetInteractiveObjectRaySensorFloatData(Vector2 origin)
+        {
+            List<RaySensorData> sensors = CastInteractiveObjectRays(origin);
+            List<float> floatData = new List<float>();
+
+            foreach (var sensor in sensors)
+            {
+                floatData.Add(sensor.normalizedDistance);
+            }
+
+            return floatData;
+        }
+
         // Отримання ВСІХ даних з обох систем променів
         public static List<float> GetAllRaySensorFloatData(Vector2 origin)
         {
@@ -216,6 +254,9 @@ namespace SilksongNeuralNetwork
             allData.AddRange(GetEnemyRaySensorFloatData(origin));
 
             allData.AddRange(GetEnemyProjectilesRaySensorFloatData(origin));
+
+            // Дані про інтерактивні об'єкти
+            allData.AddRange(GetInteractiveObjectRaySensorFloatData(origin));
 
             return allData;
         }
@@ -259,6 +300,17 @@ namespace SilksongNeuralNetwork
             _enemyProjectilesMaxDistance = Mathf.Max(1f, distance);
         }
 
+        // Налаштування параметрів для інтерактивних об'єктів
+        public static void SetInteractiveObjectRayCount(int count)
+        {
+            _interactiveObjectRayCount = Mathf.Max(4, count);
+        }
+
+        public static void SetInteractiveObjectMaxDistance(float distance)
+        {
+            _interactiveObjectMaxDistance = Mathf.Max(1f, distance);
+        }
+
         public static void SetObstacleLayerMask(LayerMask mask)
         {
             _obstacleLayerMask = mask;
@@ -274,6 +326,11 @@ namespace SilksongNeuralNetwork
             _enemyProjectilesLayerMask = mask;
         }
 
+        public static void SetInteractiveObjectLayerMask(LayerMask mask)
+        {
+            _interactiveObjectLayerMask = mask;
+        }
+
         // Getters
         public static int GetObstacleRayCount() => _obstacleRayCount;
         public static float GetObstacleMaxDistance() => _obstacleMaxDistance;
@@ -281,5 +338,7 @@ namespace SilksongNeuralNetwork
         public static float GetEnemyMaxDistance() => _enemyMaxDistance;
         public static int GetEnemyProjectilesRayCount() => _enemyProjectilesRayCount;
         public static float GetEnemyProjectilesMaxDistance() => _enemyProjectilesMaxDistance;
+        public static int GetInteractiveObjectRayCount() => _interactiveObjectRayCount;
+        public static float GetInteractiveObjectMaxDistance() => _interactiveObjectMaxDistance;
     }
 }

@@ -45,6 +45,11 @@ namespace SilksongNeuralNetwork
         private List<GameObject> _projectileRaySensorCircles = new List<GameObject>();
         private bool _projectileRaySensorsInitialized = false;
 
+        // Лінії для відображення променів-сенсорів (для інтерактивних об'єктів)
+        private List<LineRenderer> _interactiveObjectRaySensorRenderers = new List<LineRenderer>();
+        private List<GameObject> _interactiveObjectRaySensorCircles = new List<GameObject>();
+        private bool _interactiveObjectRaySensorsInitialized = false;
+
         private void Awake()
         {
             if (_instance == null)
@@ -257,6 +262,37 @@ namespace SilksongNeuralNetwork
             _enemyRaySensorsInitialized = true;
         }
 
+        private void InitializeInteractiveObjectRaySensorPool(int count)
+        {
+            if (_interactiveObjectRaySensorsInitialized) return;
+
+            var material = new Material(Shader.Find("Hidden/Internal-Colored"));
+            material.hideFlags = HideFlags.HideAndDontSave;
+
+            for (int i = 0; i < count; i++)
+            {
+                // Створюємо лінію променя
+                GameObject lineObject = new GameObject($"InteractiveObjectRaySensor_{i}");
+                DontDestroyOnLoad(lineObject);
+                LineRenderer lineRenderer = lineObject.AddComponent<LineRenderer>();
+
+                lineRenderer.material = material;
+                lineRenderer.startWidth = 0.03f;
+                lineRenderer.endWidth = 0.01f;
+                lineRenderer.positionCount = 2;
+                lineRenderer.sortingOrder = 9;
+
+                _interactiveObjectRaySensorRenderers.Add(lineRenderer);
+                lineObject.SetActive(false);
+
+                // Створюємо кружечок для точки зіткнення
+                GameObject circle = CreateCircle($"InteractiveObjectRaySensorCircle_{i}", 0.06f);
+                _interactiveObjectRaySensorCircles.Add(circle);
+            }
+
+            _interactiveObjectRaySensorsInitialized = true;
+        }
+
         public void DrawRaySensors(Vector2 origin, List<RaySensorData> sensors, float maxDistance, RaySensorType sensorType)
         {
             if (!Visible)
@@ -296,18 +332,31 @@ namespace SilksongNeuralNetwork
                 primaryColor = new Color(0.2f, 0.5f, 1f, 0.9f);
                 secondaryColor = new Color(0.2f, 0.5f, 1f, 0.3f);
             }
-            else // RaySensorType.EnemiesProjectiles
+            else if (sensorType == RaySensorType.EnemiesProjectiles)
             {
                 if (!_projectileRaySensorsInitialized || _projectileRaySensorRenderers.Count < sensors.Count)
                 {
                     InitializeProjectileRaySensorPool(sensors.Count);
                 }
-                renderers = _projectileRaySensorRenderers;  // ✅ ВИПРАВЛЕНО
-                circles = _projectileRaySensorCircles;      // ✅ ВИПРАВЛЕНО
+                renderers = _projectileRaySensorRenderers;
+                circles = _projectileRaySensorCircles;
 
-                // Яскраво-жовтий колір для снарядів
+                // Жовтий колір для снарядів
                 primaryColor = new Color(1f, 1f, 0f, 0.9f);
                 secondaryColor = new Color(1f, 1f, 0f, 0.3f);
+            }
+            else // RaySensorType.InteractiveObjects
+            {
+                if (!_interactiveObjectRaySensorsInitialized || _interactiveObjectRaySensorRenderers.Count < sensors.Count)
+                {
+                    InitializeInteractiveObjectRaySensorPool(sensors.Count);
+                }
+                renderers = _interactiveObjectRaySensorRenderers;
+                circles = _interactiveObjectRaySensorCircles;
+
+                // Зелений колір для інтерактивних об'єктів
+                primaryColor = new Color(0.2f, 1f, 0.2f, 0.9f);
+                secondaryColor = new Color(0.2f, 1f, 0.2f, 0.3f);
             }
 
 
@@ -407,11 +456,17 @@ namespace SilksongNeuralNetwork
                 circles = _enemyRaySensorCircles;
                 initialized = _enemyRaySensorsInitialized;
             }
-            else // RaySensorType.EnemiesProjectiles
+            else if (sensorType == RaySensorType.EnemiesProjectiles)
             {
                 renderers = _projectileRaySensorRenderers;
                 circles = _projectileRaySensorCircles;
                 initialized = _projectileRaySensorsInitialized;
+            }
+            else // RaySensorType.InteractiveObjects
+            {
+                renderers = _interactiveObjectRaySensorRenderers;
+                circles = _interactiveObjectRaySensorCircles;
+                initialized = _interactiveObjectRaySensorsInitialized;
             }
 
             if (!initialized) return;
@@ -441,6 +496,7 @@ namespace SilksongNeuralNetwork
             HideRaySensors(RaySensorType.Obstacles);
             HideRaySensors(RaySensorType.Enemies);
             HideRaySensors(RaySensorType.EnemiesProjectiles);
+            HideRaySensors(RaySensorType.InteractiveObjects);
         }
     }
 }

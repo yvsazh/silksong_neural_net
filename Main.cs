@@ -14,6 +14,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 using UnityEngine;
 
@@ -23,9 +24,9 @@ namespace SilksongNeuralNetwork
 {
     public enum AgentMode
     {
-        Disabled,      // Тренування вимкнене
-        Training,      // Тренування активне
-        Inference      // Нейромережа грає
+        Disabled,
+        Training,
+        Inference
     }
 
     [BepInPlugin("com.hackwhiz.nnagent", "Neural Net Agent for Silksong", "1.0.0")]
@@ -40,7 +41,6 @@ namespace SilksongNeuralNetwork
         public InputHandler myInputHandler;
         public HeroActions myInputActions;
 
-        // ACTIONS
         public PlayMakerFSM[] fsms;
         public ListenForCast castAction;
 
@@ -52,6 +52,11 @@ namespace SilksongNeuralNetwork
         private FunctionLogger _functionLogger;
         private NNInterface _interface;
 
+        // Багатопотоковість
+        private Thread _trainingThread;
+        private volatile bool _trainingThreadRunning = false;
+        private readonly object _modeLock = new object();
+
         public static string ModelsPath => Path.Combine(Application.persistentDataPath, "models");
 
         private void Awake()
@@ -60,7 +65,6 @@ namespace SilksongNeuralNetwork
 
             Instance = this;
 
-            // Створюємо папку для моделей
             if (!Directory.Exists(ModelsPath))
             {
                 Directory.CreateDirectory(ModelsPath);
@@ -86,10 +90,76 @@ namespace SilksongNeuralNetwork
             hero = GameObject.FindFirstObjectByType<HeroController>();
             Harmony.CreateAndPatchAll(typeof(Agent), null);
 
-            // Створюємо інтерфейс
             GameObject interfaceObj = new GameObject("NNInterface");
             _interface = interfaceObj.AddComponent<NNInterface>();
             DontDestroyOnLoad(interfaceObj);
+
+            // Запускаємо фоновий потік для навчання
+            StartTrainingThread();
+        }
+
+        private void OnDestroy()
+        {
+            StopTrainingThread();
+        }
+
+        private void StartTrainingThread()
+        {
+            if (_trainingThread != null && _trainingThread.IsAlive)
+                return;
+
+            _trainingThreadRunning = true;
+            _trainingThread = new Thread(TrainingLoop)
+            {
+                IsBackground = true,
+                Priority = System.Threading.ThreadPriority.BelowNormal
+            };
+            _trainingThread.Start();
+            Logger.LogInfo("Training thread started");
+        }
+
+        private void StopTrainingThread()
+        {
+            _trainingThreadRunning = false;
+            if (_trainingThread != null && _trainingThread.IsAlive)
+            {
+                _trainingThread.Join(1000);
+                Logger.LogInfo("Training thread stopped");
+            }
+        }
+
+        private void TrainingLoop()
+        {
+            while (_trainingThreadRunning)
+            {
+                try
+                {
+                    AgentMode currentMode;
+                    lock (_modeLock)
+                    {
+                        currentMode = _currentMode;
+                    }
+
+                    if (currentMode == AgentMode.Training && _nn != null)
+                    {
+                        // Навчання відбувається тут, в окремому потоці
+                        double error = _nn.TrainBatch();
+
+                        // Невелика затримка, щоб не навантажувати CPU на 100%
+                        Thread.Sleep(10);
+                    }
+                    else
+                    {
+                        // Якщо не тренуємо, чекаємо довше
+                        Thread.Sleep(100);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError($"Error in training thread: {ex.Message}");
+                    Thread.Sleep(1000);
+                }
+            }
         }
 
         private bool Initialize()
@@ -219,8 +289,13 @@ namespace SilksongNeuralNetwork
 
                     hero.AddSilk(999, false);
 
-                    // Обробка режимів
-                    switch (_currentMode)
+                    AgentMode currentMode;
+                    lock (_modeLock)
+                    {
+                        currentMode = _currentMode;
+                    }
+
+                    switch (currentMode)
                     {
                         case AgentMode.Training:
                             HandleTrainingMode(input, target, predictedActions);
@@ -229,7 +304,6 @@ namespace SilksongNeuralNetwork
                             HandleInferenceMode(predictedActions);
                             break;
                         case AgentMode.Disabled:
-                            // Нічого не робимо
                             break;
                     }
 
@@ -244,10 +318,11 @@ namespace SilksongNeuralNetwork
 
             if (playerDidAction)
             {
+                // Тільки збираємо дані, навчання відбувається в іншому потоці
                 _nn.CollectExperience(input, target);
-                double error = _nn.TrainBatch();
 
-                if (Time.frameCount % 100 == 0)
+                // Логування рідше, щоб не навантажувати
+                if (Time.frameCount % 300 == 0)
                 {
                     Logger.LogInfo($"[NeuralNet] {_nn.GetStats()}");
                     Logger.LogInfo($"[NeuralNet] Prediction: {string.Join(",", predictedActions)} | Real Action: {string.Join(",", target)}");
@@ -280,32 +355,27 @@ namespace SilksongNeuralNetwork
 
         private void HandleHotkeys()
         {
-            // W - зміна режиму
             if (Input.GetKeyDown(KeyCode.W))
             {
                 CycleMode();
             }
 
-            // G - відкрити меню збереження
             if (Input.GetKeyDown(KeyCode.E))
             {
                 _interface.ShowSaveDialog();
             }
 
-            // Q - відкрити меню завантаження
             if (Input.GetKeyDown(KeyCode.R))
             {
                 _interface.ShowLoadDialog();
             }
 
-            // F - швидке збереження (перезаписати поточну модель)
             if (Input.GetKeyDown(KeyCode.Y) && !string.IsNullOrEmpty(_currentModelName))
             {
                 SaveModel(_currentModelName);
                 Logger.LogInfo($"Model '{_currentModelName}' quick saved!");
             }
 
-            // Debug hotkeys
             if (Input.GetKeyDown(KeyCode.L))
             {
                 if (DebugTools.Instance != null)
@@ -327,9 +397,12 @@ namespace SilksongNeuralNetwork
 
         private void CycleMode()
         {
-            _currentMode = (AgentMode)(((int)_currentMode + 1) % 3);
-            Logger.LogInfo($"Mode changed to: {_currentMode}");
-            _interface.UpdateModeText(_currentMode);
+            lock (_modeLock)
+            {
+                _currentMode = (AgentMode)(((int)_currentMode + 1) % 3);
+                Logger.LogInfo($"Mode changed to: {_currentMode}");
+                _interface.UpdateModeText(_currentMode);
+            }
         }
 
         public void SaveModel(string modelName)
@@ -369,7 +442,10 @@ namespace SilksongNeuralNetwork
 
         public AgentMode GetCurrentMode()
         {
-            return _currentMode;
+            lock (_modeLock)
+            {
+                return _currentMode;
+            }
         }
 
         public string GetCurrentModelName()

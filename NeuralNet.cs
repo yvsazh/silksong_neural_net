@@ -3,6 +3,7 @@ using System.IO;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using System.Threading;
 
 namespace SilksongNeuralNetwork
 {
@@ -10,6 +11,7 @@ namespace SilksongNeuralNetwork
     {
         private Layer[] _layers;
         private readonly object _trainingLock = new object();
+        private readonly object _predictionLock = new object();
 
         private double[] _inputCache;
         private double[] _outputCache;
@@ -17,7 +19,7 @@ namespace SilksongNeuralNetwork
         public int InputSize { get; private set; }
         public int OutputSize { get; private set; }
 
-        public double LearningRate { get; set; } = 0.001;
+        public double LearningRate { get; set; } = 0.002; // Підвищено для швидшого навчання
         public double Momentum { get; set; } = 0.9;
         public double GradientClipValue { get; set; } = 1.0;
         public double L2Regularization { get; set; } = 0.0001;
@@ -32,20 +34,41 @@ namespace SilksongNeuralNetwork
         private int _bufferHead = 0;
         private int _bufferCount = 0;
         private const int MAX_BUFFER_SIZE = 10000;
-        private const int BATCH_SIZE = 64;
+        private const int BATCH_SIZE = 32;
         private const int MIN_BUFFER_SIZE = 128;
 
-        private int _frameCounter = 0;
-        private const int TRAIN_EVERY_N_FRAMES = 100;
+        private int _trainingCounter = 0;
+        private const int TRAIN_EVERY_N_CALLS = 50;
 
-        public int TotalSamplesCollected { get; private set; } = 0;
-        public double LastBatchError { get; private set; } = 0;
-        public double RunningAvgError { get; private set; } = 0;
+        private int _totalSamplesCollected = 0;
+        public int TotalSamplesCollected => _totalSamplesCollected;
+
+        private double _lastBatchError = 0;
+        public double LastBatchError => _lastBatchError;
+
+        private double _runningAvgError = 0;
+        public double RunningAvgError => _runningAvgError;
+
         private const double ERROR_SMOOTHING = 0.99;
 
-        // Статистика для відстеження балансу дій
         private int[] _actionCounts;
-        private int _statsFrameCounter = 0;
+        private int _statsCounter = 0;
+
+        // КРИТИЧНО: Ваги для loss function - помірні, щоб не переборщити
+        private static readonly double[] ACTION_LOSS_WEIGHTS = {
+            0.1,   // 0: Right - мінімальна вага
+            0.1,   // 1: Left - мінімальна вага
+            5.0,   // 2: Jump - висока вага
+            5.0,   // 3: Dash - висока вага
+            7.0,   // 4: Attack - середня вага
+            7.0,   // 5: DownAttack - висока вага
+            7.0,   // 6: UpAttack - висока вага
+            10.0,   // 7: Cast - висока вага
+            12.0,   // 8: MainAbility - висока вага
+            12.0,   // 9: FirstTool - висока вага
+            12.0,   // 10: SecondTool - висока вага
+            10.0    // 11: HarpoonDash - висока вага
+        };
 
         private struct Experience
         {
@@ -199,7 +222,7 @@ namespace SilksongNeuralNetwork
         }
 
         public NeuralNet(int inputSize, int outputSize, int[] hiddenLayers = null,
-                         double learningRate = 0.001, double momentum = 0.9)
+                         double learningRate = 0.002, double momentum = 0.9)
         {
             if (inputSize <= 0 || outputSize <= 0)
                 throw new ArgumentException("Input/Output size must be positive");
@@ -211,9 +234,11 @@ namespace SilksongNeuralNetwork
 
             if (hiddenLayers == null || hiddenLayers.Length == 0)
             {
-                int h1 = Math.Max(64, Math.Min(256, inputSize * 2));
-                int h2 = Math.Max(32, Math.Min(128, inputSize));
-                hiddenLayers = new int[] { h1, h2 };
+                // Більша мережа для кращого навчання складних паттернів
+                // int h1 = Math.Max(128, Math.Min(512, inputSize * 3));
+                // int h2 = Math.Max(64, Math.Min(256, inputSize * 2));
+                // int h3 = Math.Max(32, Math.Min(128, inputSize));
+                hiddenLayers = new int[] { 128, 64 };
             }
 
             InitializeNetwork(hiddenLayers);
@@ -265,27 +290,30 @@ namespace SilksongNeuralNetwork
             if (input.Length != InputSize)
                 throw new ArgumentException($"Input size mismatch: expected {InputSize}, got {input.Length}");
 
-            for (int i = 0; i < InputSize; i++)
-                _inputCache[i] = input[i];
-
-            double[] current = _inputCache;
-            double[] temp = new double[_layers[0].OutputSize];
-
-            for (int l = 0; l < _layers.Length; l++)
+            lock (_predictionLock)
             {
-                var layer = _layers[l];
-                var output = l == _layers.Length - 1 ? _outputCache :
-                           (l == 0 ? temp : new double[layer.OutputSize]);
+                for (int i = 0; i < InputSize; i++)
+                    _inputCache[i] = input[i];
 
-                layer.Forward(current, output);
-                current = output;
+                double[] current = _inputCache;
+                double[] temp = new double[_layers[0].OutputSize];
+
+                for (int l = 0; l < _layers.Length; l++)
+                {
+                    var layer = _layers[l];
+                    var output = l == _layers.Length - 1 ? _outputCache :
+                               (l == 0 ? temp : new double[layer.OutputSize]);
+
+                    layer.Forward(current, output);
+                    current = output;
+                }
+
+                float[] result = new float[OutputSize];
+                for (int i = 0; i < OutputSize; i++)
+                    result[i] = (float)_outputCache[i];
+
+                return result;
             }
-
-            float[] result = new float[OutputSize];
-            for (int i = 0; i < OutputSize; i++)
-                result[i] = (float)_outputCache[i];
-
-            return result;
         }
 
         public void CollectExperience(float[] input, float[] target)
@@ -293,7 +321,25 @@ namespace SilksongNeuralNetwork
             if (input == null || target == null) return;
             if (input.Length != InputSize || target.Length != OutputSize) return;
 
-            // Обчислюємо пріоритет на основі рідкості дій
+            // Фільтрація: збираємо тільки цікаві семпли
+            bool hasImportantAction = false;
+            for (int i = 2; i < target.Length; i++) // Пропускаємо Right/Left
+            {
+                if (target[i] > 0.5f)
+                {
+                    hasImportantAction = true;
+                    break;
+                }
+            }
+
+            // Збираємо рухи тільки з 20% ймовірністю (було 5% - занадто мало)
+            bool collectMovement = UnityEngine.Random.value < 0.2f;
+            bool hasMovement = target[0] > 0.5f || target[1] > 0.5f;
+
+            // Не збираємо нудні семпли
+            if (!hasImportantAction && hasMovement && !collectMovement)
+                return;
+
             float priority = CalculatePriority(target);
 
             var exp = new Experience
@@ -315,7 +361,6 @@ namespace SilksongNeuralNetwork
                 if (_bufferCount < MAX_BUFFER_SIZE)
                     _bufferCount++;
 
-                // Оновлюємо статистику
                 for (int i = 0; i < OutputSize; i++)
                 {
                     if (target[i] > 0.5f)
@@ -323,111 +368,62 @@ namespace SilksongNeuralNetwork
                 }
             }
 
-            TotalSamplesCollected++;
+            Interlocked.Increment(ref _totalSamplesCollected);
         }
 
         private float CalculatePriority(float[] target)
         {
-            // Базовий пріоритет
             float priority = 1.0f;
 
-            // Індекси дій (з GetOutputData та GameAction):
-            // 0: Right (GoRight) - ДУЖЕ часта дія
-            // 1: Left (GoLeft) - ДУЖЕ часта дія
-            // 2: Jump (BigJump) - рідкісна, КРИТИЧНО ВАЖЛИВА
-            // 3: Dash - рідкісна, дуже важлива для мобільності
-            // 4: Attack - середня частота, важлива в бою
-            // 5: DownAttack - рідкісна, важлива (pogo)
-            // 6: UpAttack - рідкісна, важлива
-            // 7: Cast (Bind) - рідкісна, дуже важлива
-            // 8: MainAbility (A Sphere) - рідкісна
-            // 9: FirstTool - дуже рідкісна
-            // 10: SecondTool - дуже рідкісна
-            // 11: HarpoonDash - дуже рідкісна, критична для швидкого пересування
-
-            // РУХИ (дуже часті) - мінімальний пріоритет
             if (target[0] > 0.5f || target[1] > 0.5f)
-            {
-                priority *= 0.4f; // Зменшуємо ще більше, бо вони домінують
-            }
+                priority *= 0.3f; // Помірний пріоритет для рухів
 
-            // СТРИБОК - МАКСИМАЛЬНИЙ пріоритет (найважливіша механіка в платформері!)
             if (target[2] > 0.5f)
-            {
-                priority *= 8.0f; // Дуже високий пріоритет
-            }
+                priority *= 10.0f; // Jump
 
-            // ДАШ - дуже високий пріоритет (ключова механіка руху)
             if (target[3] > 0.5f)
-            {
-                priority *= 6.0f;
-            }
+                priority *= 8.0f; // Dash
 
-            // ЗВИЧАЙНА АТАКА - середній пріоритет
             if (target[4] > 0.5f)
-            {
-                priority *= 5.0f;
-            }
+                priority *= 6.0f; // Attack
 
-            // DOWN ATTACK - високий пріоритет (pogo - важлива техніка)
             if (target[5] > 0.5f)
-            {
-                priority *= 5.0f;
-            }
+                priority *= 8.0f; // DownAttack
 
-            // UP ATTACK - високий пріоритет
             if (target[6] > 0.5f)
-            {
-                priority *= 5.0f;
-            }
+                priority *= 8.0f; // UpAttack
 
-            // CAST/BIND - дуже високий пріоритет (лікування/зцілення)
             if (target[7] > 0.5f)
-            {
-                priority *= 10.0f;
-            }
+                priority *= 10.0f; // Cast
 
-            // MAIN ABILITY (A Sphere) - високий пріоритет
             if (target[8] > 0.5f)
-            {
-                priority *= 10.0f;
-            }
+                priority *= 10.0f; // MainAbility
 
-            // FIRST TOOL - дуже високий пріоритет
             if (target[9] > 0.5f)
-            {
-                priority *= 6.0f;
-            }
+                priority *= 8.0f; // FirstTool
 
-            // SECOND TOOL - дуже високий пріоритет
             if (target[10] > 0.5f)
-            {
-                priority *= 6.0f;
-            }
+                priority *= 8.0f; // SecondTool
 
-            // HARPOON DASH - максимальний пріоритет (дуже рідкісна і потужна механіка)
             if (target[11] > 0.5f)
-            {
-                priority *= 10.0f;
-            }
+                priority *= 10.0f; // HarpoonDash
 
             return priority;
         }
 
         public double TrainBatch()
         {
-            _frameCounter++;
-            _statsFrameCounter++;
+            _trainingCounter++;
+            _statsCounter++;
 
-            // Логуємо статистику кожні 1000 кадрів
-            if (_statsFrameCounter >= 1000)
+            if (_statsCounter >= 500)
             {
                 LogActionStatistics();
-                _statsFrameCounter = 0;
+                _statsCounter = 0;
             }
 
-            if (_frameCounter % TRAIN_EVERY_N_FRAMES != 0)
-                return LastBatchError;
+            if (_trainingCounter % TRAIN_EVERY_N_CALLS != 0)
+                return _lastBatchError;
 
             lock (_trainingLock)
             {
@@ -438,19 +434,18 @@ namespace SilksongNeuralNetwork
                 var random = new System.Random();
                 var usedIndices = new HashSet<int>();
 
-                // Обчислюємо суму пріоритетів
                 double totalPriority = 0;
                 for (int i = 0; i < _bufferCount; i++)
                 {
                     totalPriority += _replayBuffer[i].Priority;
                 }
 
-                // Семплюємо з урахуванням пріоритетів
-                for (int i = 0; i < Math.Min(BATCH_SIZE, _bufferCount); i++)
+                int actualBatchSize = Math.Min(BATCH_SIZE, _bufferCount);
+
+                for (int i = 0; i < actualBatchSize; i++)
                 {
                     int idx = SampleByPriority(random, totalPriority);
 
-                    // Уникаємо дублікатів
                     int attempts = 0;
                     while (usedIndices.Contains(idx) && attempts < 100)
                     {
@@ -463,10 +458,10 @@ namespace SilksongNeuralNetwork
                     totalError += TrainSingle(exp.Input, exp.Target);
                 }
 
-                LastBatchError = totalError / usedIndices.Count;
-                RunningAvgError = RunningAvgError * ERROR_SMOOTHING + LastBatchError * (1 - ERROR_SMOOTHING);
+                _lastBatchError = totalError / actualBatchSize;
+                _runningAvgError = _runningAvgError * ERROR_SMOOTHING + _lastBatchError * (1 - ERROR_SMOOTHING);
 
-                return LastBatchError;
+                return _lastBatchError;
             }
         }
 
@@ -492,10 +487,12 @@ namespace SilksongNeuralNetwork
                 "UpAttack", "Cast", "MainAbility", "FirstTool", "SecondTool", "HarpoonDash"
             };
 
-            string stats = "[NeuralNet] Action Distribution:\n";
+            string stats = "[NeuralNet] Action Distribution (in buffer):\n";
+            int total = _actionCounts.Sum();
             for (int i = 0; i < Math.Min(_actionCounts.Length, actionNames.Length); i++)
             {
-                stats += $"  {actionNames[i]}: {_actionCounts[i]}\n";
+                float percentage = total > 0 ? (_actionCounts[i] * 100.0f / total) : 0;
+                stats += $"  {actionNames[i]}: {_actionCounts[i]} ({percentage:F1}%)\n";
             }
             Debug.Log(stats);
         }
@@ -512,28 +509,48 @@ namespace SilksongNeuralNetwork
                 current = layerOutputs[l];
             }
 
-            double error = 0;
+            // BINARY CROSS-ENTROPY LOSS з вагами
+            double weightedError = 0;
+            double totalWeight = 0;
+
             for (int i = 0; i < OutputSize; i++)
             {
-                double diff = current[i] - target[i];
-                error += diff * diff;
-            }
-            error /= OutputSize;
+                double predicted = Math.Max(1e-7, Math.Min(1 - 1e-7, current[i])); // Clip для стабільності
+                double actual = target[i];
 
-            Backpropagate(target);
+                // Binary Cross-Entropy: -[y*log(p) + (1-y)*log(1-p)]
+                double bce = -(actual * Math.Log(predicted) + (1 - actual) * Math.Log(1 - predicted));
+
+                // Застосовуємо вагу
+                double weight = ACTION_LOSS_WEIGHTS[i];
+                weightedError += bce * weight;
+                totalWeight += weight;
+            }
+
+            double error = weightedError / totalWeight;
+
+            BackpropagateWeighted(target);
             UpdateWeights();
 
             return error;
         }
 
-        private void Backpropagate(double[] target)
+        private void BackpropagateWeighted(double[] target)
         {
             var outputLayer = _layers[_layers.Length - 1];
+
             for (int i = 0; i < outputLayer.OutputSize; i++)
             {
-                double output = outputLayer.Output[i];
-                double error = output - target[i];
-                outputLayer.Delta[i] = error * outputLayer.ActivationDerivative(i);
+                double output = Math.Max(1e-7, Math.Min(1 - 1e-7, outputLayer.Output[i]));
+                double actual = target[i];
+
+                // Градієнт для Binary Cross-Entropy: (predicted - actual) / [predicted * (1 - predicted)]
+                // Але для sigmoid це спрощується до: (predicted - actual)
+                double error = output - actual;
+
+                // Застосовуємо вагу + derivative
+                double weight = ACTION_LOSS_WEIGHTS[i];
+                outputLayer.Delta[i] = error * weight * outputLayer.ActivationDerivative(i);
             }
 
             for (int l = _layers.Length - 2; l >= 0; l--)
@@ -733,9 +750,9 @@ namespace SilksongNeuralNetwork
         public string GetStats()
         {
             return $"Buffer: {_bufferCount}/{MAX_BUFFER_SIZE} | " +
-                   $"Samples: {TotalSamplesCollected} | " +
-                   $"Error: {LastBatchError:F5} | " +
-                   $"AvgError: {RunningAvgError:F5}";
+                   $"Samples: {_totalSamplesCollected} | " +
+                   $"Error: {_lastBatchError:F5} | " +
+                   $"AvgError: {_runningAvgError:F5}";
         }
     }
 }

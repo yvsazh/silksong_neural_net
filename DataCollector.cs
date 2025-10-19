@@ -18,14 +18,16 @@ namespace SilksongNeuralNetwork
         // Ініціалізація системи променів (викликати один раз на початку)
         static DataCollector()
         {
-            // Налаштовуємо обидві системи променів
+            // Налаштовуємо всі системи променів
             RaySensorSystem.Initialize(
                 obstacleRayCount: 8,
                 obstacleMaxDistance: 12f,
-                enemyRayCount: 6,
+                enemyRayCount: 12,
                 enemyMaxDistance: 25f,
-                enemyProjectilesRayCount: 12,
-                enemyProjectilesMaxDistance: 12f
+                enemyProjectilesRayCount: 20,
+                enemyProjectilesMaxDistance: 12f,
+                interactiveObjectRayCount: 20,
+                interactiveObjectMaxDistance: 15f
             );
         }
 
@@ -88,6 +90,13 @@ namespace SilksongNeuralNetwork
         {
             Vector2 heroPosition = hero.transform.position;
             return RaySensorSystem.GetEnemyProjectilesRaySensorFloatData(heroPosition);
+        }
+
+        // Отримання даних з променів для інтерактивних об'єктів
+        private static List<float> GetInteractiveObjectRaySensorData(HeroController hero)
+        {
+            Vector2 heroPosition = hero.transform.position;
+            return RaySensorSystem.GetInteractiveObjectRaySensorFloatData(heroPosition);
         }
 
         public static List<float> GetInputData()
@@ -193,6 +202,7 @@ namespace SilksongNeuralNetwork
             List<float> obstacleRaySensorData = GetObstacleRaySensorData(hero);
             List<float> enemyRaySensorData = GetEnemyRaySensorData(hero);
             List<float> enemyProjectilesRaySensorData = GetEnemyProjectilesRaySensorData(hero);
+            List<float> interactiveObjectRaySensorData = GetInteractiveObjectRaySensorData(hero);
 
             // ==== ОБ'ЄДНАННЯ ВСІХ ДАНИХ ====
             inputData.AddRange(hornetState);           // ~48 значень
@@ -201,8 +211,7 @@ namespace SilksongNeuralNetwork
             inputData.AddRange(obstacleRaySensorData); // 16 значень (ray count)
             inputData.AddRange(enemyRaySensorData);    // 12 значень (ray count)
             inputData.AddRange(enemyProjectilesRaySensorData); // залежить від налаштувань
-
-            // Загалом: ~90-100 значень замість 120+
+            inputData.AddRange(interactiveObjectRaySensorData); // 8 значень (ray count)
 
             return inputData;
         }
