@@ -21,7 +21,11 @@ namespace SilksongNeuralNetwork
                 ["save_button"] = "Зберегти",
                 ["cancel_button"] = "Скасувати",
                 ["close_button"] = "Закрити",
-                ["open_folder_button"] = "Відкрити папку"
+                ["open_folder_button"] = "Відкрити папку",
+                ["model_untitled"] = "Без назви",
+                ["model_prefix"] = "Модель: ",
+                ["notification_saved"] = "Модель '{0}' збережено!",
+                ["notification_loaded"] = "Модель '{0}' завантажено!"
             },
 
             // English
@@ -38,7 +42,11 @@ namespace SilksongNeuralNetwork
                 ["save_button"] = "Save",
                 ["cancel_button"] = "Cancel",
                 ["close_button"] = "Close",
-                ["open_folder_button"] = "Open Folder"
+                ["open_folder_button"] = "Open Folder",
+                ["model_untitled"] = "Untitled",
+                ["model_prefix"] = "Model: ",
+                ["notification_saved"] = "Model '{0}' saved!",
+                ["notification_loaded"] = "Model '{0}' loaded!"
             },
 
             // Deutsch
@@ -55,7 +63,11 @@ namespace SilksongNeuralNetwork
                 ["save_button"] = "Speichern",
                 ["cancel_button"] = "Abbrechen",
                 ["close_button"] = "Schließen",
-                ["open_folder_button"] = "Ordner öffnen"
+                ["open_folder_button"] = "Ordner öffnen",
+                ["model_untitled"] = "Ohne Titel",
+                ["model_prefix"] = "Modell: ",
+                ["notification_saved"] = "Modell '{0}' gespeichert!",
+                ["notification_loaded"] = "Modell '{0}' geladen!"
             },
 
             // Español
@@ -72,7 +84,11 @@ namespace SilksongNeuralNetwork
                 ["save_button"] = "Guardar",
                 ["cancel_button"] = "Cancelar",
                 ["close_button"] = "Cerrar",
-                ["open_folder_button"] = "Abrir carpeta"
+                ["open_folder_button"] = "Abrir carpeta",
+                ["model_untitled"] = "Sin título",
+                ["model_prefix"] = "Modelo: ",
+                ["notification_saved"] = "¡Modelo '{0}' guardado!",
+                ["notification_loaded"] = "¡Modelo '{0}' cargado!"
             },
 
             // Français
@@ -89,7 +105,11 @@ namespace SilksongNeuralNetwork
                 ["save_button"] = "Enregistrer",
                 ["cancel_button"] = "Annuler",
                 ["close_button"] = "Fermer",
-                ["open_folder_button"] = "Ouvrir le dossier"
+                ["open_folder_button"] = "Ouvrir le dossier",
+                ["model_untitled"] = "Sans titre",
+                ["model_prefix"] = "Modèle: ",
+                ["notification_saved"] = "Modèle '{0}' enregistré!",
+                ["notification_loaded"] = "Modèle '{0}' chargé!"
             },
 
             // Italiano
@@ -106,7 +126,11 @@ namespace SilksongNeuralNetwork
                 ["save_button"] = "Salva",
                 ["cancel_button"] = "Annulla",
                 ["close_button"] = "Chiudi",
-                ["open_folder_button"] = "Apri cartella"
+                ["open_folder_button"] = "Apri cartella",
+                ["model_untitled"] = "Senza titolo",
+                ["model_prefix"] = "Modello: ",
+                ["notification_saved"] = "Modello '{0}' salvato!",
+                ["notification_loaded"] = "Modello '{0}' caricato!"
             },
 
             // 日本語 (Japanese)
@@ -123,7 +147,11 @@ namespace SilksongNeuralNetwork
                 ["save_button"] = "保存",
                 ["cancel_button"] = "キャンセル",
                 ["close_button"] = "閉じる",
-                ["open_folder_button"] = "フォルダを開く"
+                ["open_folder_button"] = "フォルダを開く",
+                ["model_untitled"] = "無題",
+                ["model_prefix"] = "モデル: ",
+                ["notification_saved"] = "モデル '{0}' を保存しました!",
+                ["notification_loaded"] = "モデル '{0}' を読み込みました!"
             },
 
             // 한국어 (Korean)
@@ -140,7 +168,11 @@ namespace SilksongNeuralNetwork
                 ["save_button"] = "저장",
                 ["cancel_button"] = "취소",
                 ["close_button"] = "닫기",
-                ["open_folder_button"] = "폴더 열기"
+                ["open_folder_button"] = "폴더 열기",
+                ["model_untitled"] = "제목 없음",
+                ["model_prefix"] = "모델: ",
+                ["notification_saved"] = "모델 '{0}' 저장됨!",
+                ["notification_loaded"] = "모델 '{0}' 불러옴!"
             },
 
             // Português
@@ -157,7 +189,11 @@ namespace SilksongNeuralNetwork
                 ["save_button"] = "Salvar",
                 ["cancel_button"] = "Cancelar",
                 ["close_button"] = "Fechar",
-                ["open_folder_button"] = "Abrir pasta"
+                ["open_folder_button"] = "Abrir pasta",
+                ["model_untitled"] = "Sem título",
+                ["model_prefix"] = "Modelo: ",
+                ["notification_saved"] = "Modelo '{0}' salvo!",
+                ["notification_loaded"] = "Modelo '{0}' carregado!"
             },
 
             // 中文 (Chinese Simplified)
@@ -174,7 +210,11 @@ namespace SilksongNeuralNetwork
                 ["save_button"] = "保存",
                 ["cancel_button"] = "取消",
                 ["close_button"] = "关闭",
-                ["open_folder_button"] = "打开文件夹"
+                ["open_folder_button"] = "打开文件夹",
+                ["model_untitled"] = "无标题",
+                ["model_prefix"] = "模型：",
+                ["notification_saved"] = "模型 '{0}' 已保存！",
+                ["notification_loaded"] = "模型 '{0}' 已加载！"
             }
         };
 
