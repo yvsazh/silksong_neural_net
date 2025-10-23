@@ -20,9 +20,9 @@ namespace SilksongNeuralNetwork
         {
             // Налаштовуємо всі системи променів
             RaySensorSystem.Initialize(
-                obstacleRayCount: 8,
+                obstacleRayCount: 12,
                 obstacleMaxDistance: 12f,
-                enemyRayCount: 12,
+                enemyRayCount: 16,
                 enemyMaxDistance: 25f,
                 enemyProjectilesRayCount: 20,
                 enemyProjectilesMaxDistance: 12f,

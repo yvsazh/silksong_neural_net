@@ -47,7 +47,7 @@ namespace SilksongNeuralNetwork
         // Ініціалізація системи променів
         public static void Initialize(
             int obstacleRayCount = 16,
-            float obstacleMaxDistance = 20f,
+            float obstacleMaxDistance = 40f,
             int enemyRayCount = 12,
             float enemyMaxDistance = 20f,
             int enemyProjectilesRayCount = 20,
@@ -59,7 +59,7 @@ namespace SilksongNeuralNetwork
             // Налаштування променів для перешкод
             _obstacleRayCount = obstacleRayCount;
             _obstacleMaxDistance = obstacleMaxDistance;
-            _obstacleLayerMask = LayerMask.GetMask("Soft Terrain", "Terrain", "Default");
+            _obstacleLayerMask = LayerMask.GetMask("Terrain");
 
             // Налаштування променів для ворогів
             _enemyRayCount = enemyRayCount;

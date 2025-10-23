@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -21,6 +22,8 @@ namespace SilksongNeuralNetwork
         private GUIStyle _labelStyle;
         private GUIStyle _modeTextStyle;
         private GUIStyle _scrollViewStyle;
+        private GUIStyle _notificationStyle;
+        private GUIStyle _modelNameStyle;
         private bool _stylesInitialized = false;
 
         private string _modeText = "";
@@ -32,9 +35,13 @@ namespace SilksongNeuralNetwork
         // Для відстеження зміни мови
         private TeamCherry.Localization.LanguageCode _lastLanguageCode;
 
+        // Система сповіщень
+        private string _notificationText = "";
+        private float _notificationTimer = 0f;
+        private const float NOTIFICATION_DURATION = 3f;
+
         private void Start()
         {
-            // Ініціалізуємо мову при старті
             UpdateLanguage();
         }
 
@@ -46,14 +53,18 @@ namespace SilksongNeuralNetwork
             {
                 UpdateLanguage();
             }
+
+            // Оновлюємо таймер сповіщень
+            if (_notificationTimer > 0f)
+            {
+                _notificationTimer -= Time.deltaTime;
+            }
         }
 
         private void UpdateLanguage()
         {
             _lastLanguageCode = TeamCherry.Localization.Language.CurrentLanguage();
             UILocalization.SetLanguageFromCode(_lastLanguageCode);
-
-            // Оновлюємо текст режиму
             UpdateModeText(Agent.Instance._currentMode);
         }
 
@@ -97,12 +108,27 @@ namespace SilksongNeuralNetwork
             _modeTextStyle.fontSize = 16;
             _modeTextStyle.fontStyle = FontStyle.Bold;
             _modeTextStyle.normal.textColor = Color.yellow;
-            _modeTextStyle.alignment = TextAnchor.LowerRight;
-            _modeTextStyle.padding = new RectOffset(0, 15, 0, 15);
+            _modeTextStyle.alignment = TextAnchor.MiddleRight;
+            _modeTextStyle.padding = new RectOffset(0, 10, 5, 5);
+
+            // Назва моделі
+            _modelNameStyle = new GUIStyle(GUI.skin.label);
+            _modelNameStyle.fontSize = 14;
+            _modelNameStyle.normal.textColor = new Color(0.7f, 0.9f, 1f);
+            _modelNameStyle.alignment = TextAnchor.MiddleRight;
+            _modelNameStyle.padding = new RectOffset(0, 10, 5, 5);
 
             // ScrollView
             _scrollViewStyle = new GUIStyle(GUI.skin.scrollView);
             _scrollViewStyle.padding = new RectOffset(5, 5, 5, 5);
+
+            // Стиль для сповіщень
+            _notificationStyle = new GUIStyle(GUI.skin.label);
+            _notificationStyle.fontSize = 18;
+            _notificationStyle.fontStyle = FontStyle.Bold;
+            _notificationStyle.normal.textColor = Color.white;
+            _notificationStyle.alignment = TextAnchor.MiddleCenter;
+            _notificationStyle.padding = new RectOffset(15, 15, 10, 10);
 
             _stylesInitialized = true;
         }
@@ -111,10 +137,16 @@ namespace SilksongNeuralNetwork
         {
             InitializeStyles();
 
-            // Відображення поточного режиму (тільки якщо немає діалогів)
+            // Відображення поточного режиму та моделі (тільки якщо немає діалогів)
             if (!_showSaveDialog && !_showLoadDialog)
             {
-                DrawModeIndicator();
+                DrawStatusPanel();
+            }
+
+            // Сповіщення
+            if (_notificationTimer > 0f)
+            {
+                DrawNotification();
             }
 
             // Діалог збереження
@@ -132,34 +164,102 @@ namespace SilksongNeuralNetwork
             }
         }
 
+        private void DrawStatusPanel()
+        {
+            float width = 320f;
+            float height = 80f;
+            Rect panelRect = new Rect(Screen.width - width - 20, Screen.height - height - 20, width, height);
+
+            // Фон для панелі
+            Color oldColor = GUI.color;
+            GUI.color = new Color(0.1f, 0.1f, 0.1f, 0.8f);
+            GUI.DrawTexture(panelRect, Texture2D.whiteTexture);
+            GUI.color = oldColor;
+
+            // Внутрішня область
+            GUILayout.BeginArea(panelRect);
+            GUILayout.BeginVertical();
+
+            GUILayout.Space(8);
+
+            // Режим
+            GUILayout.Label(_modeText, _modeTextStyle);
+
+            GUILayout.Space(3);
+
+            // Назва моделі
+            string modelName = Agent.Instance.GetCurrentModelName();
+            string modelDisplayText = string.IsNullOrEmpty(modelName) || modelName == "Без назви"
+                ? UILocalization.Get("model_untitled")
+                : $"{UILocalization.Get("model_prefix")}{modelName}";
+
+            GUILayout.Label(modelDisplayText, _modelNameStyle);
+
+            GUILayout.Space(8);
+
+            GUILayout.EndVertical();
+            GUILayout.EndArea();
+        }
+
+        private void DrawNotification()
+        {
+            float width = 500f;
+            float height = 70f;
+            Rect notificationRect = new Rect(
+                (Screen.width - width) / 2,
+                Screen.height - height - 120,
+                width,
+                height
+            );
+
+            // Анімація появи/зникнення
+            float alpha = 1f;
+            if (_notificationTimer < 0.5f)
+            {
+                alpha = _notificationTimer / 0.5f; // Fade out
+            }
+            else if (_notificationTimer > NOTIFICATION_DURATION - 0.3f)
+            {
+                alpha = (NOTIFICATION_DURATION - _notificationTimer) / 0.3f; // Fade in
+            }
+
+            // Фон сповіщення
+            Color oldColor = GUI.color;
+            GUI.color = new Color(0.2f, 0.6f, 0.3f, 0.9f * alpha);
+            GUI.DrawTexture(notificationRect, Texture2D.whiteTexture);
+
+            // Бордер
+            GUI.color = new Color(0.3f, 0.8f, 0.4f, alpha);
+            DrawBorder(notificationRect, 3);
+
+            // Текст
+            GUI.color = new Color(1f, 1f, 1f, alpha);
+            GUI.Label(notificationRect, _notificationText, _notificationStyle);
+            GUI.color = oldColor;
+        }
+
+        private void DrawBorder(Rect rect, int thickness)
+        {
+            // Верхня
+            GUI.DrawTexture(new Rect(rect.x, rect.y, rect.width, thickness), Texture2D.whiteTexture);
+            // Нижня
+            GUI.DrawTexture(new Rect(rect.x, rect.y + rect.height - thickness, rect.width, thickness), Texture2D.whiteTexture);
+            // Ліва
+            GUI.DrawTexture(new Rect(rect.x, rect.y, thickness, rect.height), Texture2D.whiteTexture);
+            // Права
+            GUI.DrawTexture(new Rect(rect.x + rect.width - thickness, rect.y, thickness, rect.height), Texture2D.whiteTexture);
+        }
+
         private void DrawOverlay()
         {
-            // Малюємо напівпрозорий чорний прямокутник на весь екран
             Color oldColor = GUI.color;
             GUI.color = new Color(0, 0, 0, 0.8f);
             GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
             GUI.color = oldColor;
         }
 
-        private void DrawModeIndicator()
-        {
-            float width = 280f;
-            float height = 50f;
-            float padding = 10f;
-            Rect modeRect = new Rect(Screen.width - width - 20, Screen.height - height - 20, width, height);
-
-            // Фон для індикатора режиму
-            Color oldColor = GUI.color;
-            GUI.color = new Color(0.1f, 0.1f, 0.1f, 0.7f);
-            GUI.DrawTexture(modeRect, Texture2D.whiteTexture);
-            GUI.color = oldColor;
-
-            GUI.Label(modeRect, _modeText, _modeTextStyle);
-        }
-
         private void DrawSaveDialog()
         {
-            // Розблоковуємо курсор
             Cursor.visible = true;
             Cursor.lockState = CursorLockMode.None;
 
@@ -174,10 +274,8 @@ namespace SilksongNeuralNetwork
                 dialogHeight
             );
 
-            // Малюємо фон діалогу
             DrawDialogBackground(dialogRect);
 
-            // Внутрішня область з відступами
             Rect contentRect = new Rect(
                 dialogRect.x + padding,
                 dialogRect.y + padding,
@@ -188,25 +286,21 @@ namespace SilksongNeuralNetwork
             GUILayout.BeginArea(contentRect);
             GUILayout.BeginVertical();
 
-            // Заголовок
             GUILayout.Label(UILocalization.Get("save_title"), _titleStyle);
             GUILayout.Space(15);
 
-            // Поле введення
             GUILayout.Label(UILocalization.Get("model_name_label"), _labelStyle);
             GUILayout.Space(5);
 
             GUI.SetNextControlName(_textFieldControlName);
             _modelNameInput = GUILayout.TextField(_modelNameInput, 50, _textFieldStyle, GUILayout.Height(40));
 
-            // Автоматичний фокус на TextField при першому відкритті
             if (_shouldFocusTextField)
             {
                 GUI.FocusControl(_textFieldControlName);
                 _shouldFocusTextField = false;
             }
 
-            // Enter для збереження
             if (Event.current.type == EventType.KeyDown && Event.current.keyCode == KeyCode.Return)
             {
                 if (!string.IsNullOrWhiteSpace(_modelNameInput))
@@ -216,7 +310,6 @@ namespace SilksongNeuralNetwork
                 Event.current.Use();
             }
 
-            // Escape для скасування
             if (Event.current.type == EventType.KeyDown && Event.current.keyCode == KeyCode.Escape)
             {
                 CancelAndClose();
@@ -225,7 +318,6 @@ namespace SilksongNeuralNetwork
 
             GUILayout.Space(25);
 
-            // Кнопки
             GUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
 
@@ -250,7 +342,6 @@ namespace SilksongNeuralNetwork
 
         private void DrawLoadDialog()
         {
-            // Розблоковуємо курсор
             Cursor.visible = true;
             Cursor.lockState = CursorLockMode.None;
 
@@ -265,10 +356,8 @@ namespace SilksongNeuralNetwork
                 dialogHeight
             );
 
-            // Малюємо фон діалогу
             DrawDialogBackground(dialogRect);
 
-            // Внутрішня область з відступами
             Rect contentRect = new Rect(
                 dialogRect.x + padding,
                 dialogRect.y + padding,
@@ -279,22 +368,18 @@ namespace SilksongNeuralNetwork
             GUILayout.BeginArea(contentRect);
             GUILayout.BeginVertical();
 
-            // Заголовок
             GUILayout.Label(UILocalization.Get("load_title"), _titleStyle);
             GUILayout.Space(15);
 
-            // Поточна модель
             GUILayout.Label($"{UILocalization.Get("current_model")} {Agent.Instance.GetCurrentModelName()}", _labelStyle);
             GUILayout.Space(15);
 
-            // Escape для закриття
             if (Event.current.type == EventType.KeyDown && Event.current.keyCode == KeyCode.Escape)
             {
                 CancelAndClose();
                 Event.current.Use();
             }
 
-            // Список моделей
             string[] modelFiles = GetModelFiles();
 
             if (modelFiles.Length == 0)
@@ -317,6 +402,7 @@ namespace SilksongNeuralNetwork
                     if (GUILayout.Button(buttonText, _buttonStyle, GUILayout.Height(55)))
                     {
                         Agent.Instance.LoadModel(modelName);
+                        ShowNotification(string.Format(UILocalization.Get("notification_loaded"), modelName));
                         _showLoadDialog = false;
                         RestoreCursor();
                     }
@@ -329,7 +415,6 @@ namespace SilksongNeuralNetwork
 
             GUILayout.Space(15);
 
-            // Кнопки
             GUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
 
@@ -354,12 +439,10 @@ namespace SilksongNeuralNetwork
 
         private void DrawDialogBackground(Rect rect)
         {
-            // Темна рамка (бордер)
             Color oldColor = GUI.color;
             GUI.color = new Color(0.2f, 0.2f, 0.25f, 1f);
             GUI.DrawTexture(rect, Texture2D.whiteTexture);
 
-            // Світліший внутрішній фон
             Rect innerRect = new Rect(rect.x + 3, rect.y + 3, rect.width - 6, rect.height - 6);
             GUI.color = new Color(0.15f, 0.15f, 0.2f, 1f);
             GUI.DrawTexture(innerRect, Texture2D.whiteTexture);
@@ -393,7 +476,6 @@ namespace SilksongNeuralNetwork
         {
             string modelsPath = Agent.ModelsPath;
 
-            // Створюємо папку якщо не існує
             if (!Directory.Exists(modelsPath))
             {
                 Directory.CreateDirectory(modelsPath);
@@ -401,12 +483,10 @@ namespace SilksongNeuralNetwork
 
             try
             {
-                // Відкриваємо папку в провіднику
                 System.Diagnostics.Process.Start(modelsPath);
             }
             catch (Exception ex)
             {
-                // Якщо не вдалося відкрити стандартним способом, пробуємо альтернативні методи
                 try
                 {
                     if (Application.platform == RuntimePlatform.WindowsPlayer || Application.platform == RuntimePlatform.WindowsEditor)
@@ -435,6 +515,7 @@ namespace SilksongNeuralNetwork
             if (!string.IsNullOrEmpty(trimmedName))
             {
                 Agent.Instance.SaveModel(trimmedName);
+                ShowNotification(string.Format(UILocalization.Get("notification_saved"), trimmedName));
                 _showSaveDialog = false;
                 RestoreCursor();
             }
@@ -460,6 +541,12 @@ namespace SilksongNeuralNetwork
             _scrollPosition = Vector2.zero;
         }
 
+        public void ShowNotification(string message)
+        {
+            _notificationText = message;
+            _notificationTimer = NOTIFICATION_DURATION;
+        }
+
         public void UpdateModeText(AgentMode mode)
         {
             switch (mode)
@@ -476,7 +563,6 @@ namespace SilksongNeuralNetwork
             }
         }
 
-        // Метод для блокування Input гри коли відкрито діалог
         public bool IsDialogOpen()
         {
             return _showSaveDialog || _showLoadDialog;

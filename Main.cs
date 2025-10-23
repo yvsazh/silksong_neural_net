@@ -287,7 +287,7 @@ namespace SilksongNeuralNetwork
                     var predictedProbabilities = _nn.Predict(input);
                     var predictedActions = _nn.ToActions(predictedProbabilities, 0.3f);
 
-                    hero.AddSilk(999, false);
+                    // hero.AddSilk(999, false);
 
                     AgentMode currentMode;
                     lock (_modeLock)
@@ -417,6 +417,9 @@ namespace SilksongNeuralNetwork
             _nn.Save(modelPath);
             _currentModelName = modelName;
             Logger.LogInfo($"Model saved as '{modelName}'");
+            
+            // Add notification to UI
+            _interface.ShowNotification(string.Format(UILocalization.Get("notification_saved"), modelName));
         }
 
         public void LoadModel(string modelName)
@@ -433,6 +436,9 @@ namespace SilksongNeuralNetwork
                 _nn = NeuralNet.Load(modelPath);
                 _currentModelName = modelName;
                 Logger.LogInfo($"Model '{modelName}' loaded!");
+                
+                // Add notification to UI
+                _interface.ShowNotification(string.Format(UILocalization.Get("notification_loaded"), modelName));
             }
             else
             {

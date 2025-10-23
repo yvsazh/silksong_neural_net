@@ -234,11 +234,7 @@ namespace SilksongNeuralNetwork
 
             if (hiddenLayers == null || hiddenLayers.Length == 0)
             {
-                // Більша мережа для кращого навчання складних паттернів
-                // int h1 = Math.Max(128, Math.Min(512, inputSize * 3));
-                // int h2 = Math.Max(64, Math.Min(256, inputSize * 2));
-                // int h3 = Math.Max(32, Math.Min(128, inputSize));
-                hiddenLayers = new int[] { 128, 64 };
+                hiddenLayers = new int[] { 128, 64, 32 };
             }
 
             InitializeNetwork(hiddenLayers);
@@ -544,8 +540,6 @@ namespace SilksongNeuralNetwork
                 double output = Math.Max(1e-7, Math.Min(1 - 1e-7, outputLayer.Output[i]));
                 double actual = target[i];
 
-                // Градієнт для Binary Cross-Entropy: (predicted - actual) / [predicted * (1 - predicted)]
-                // Але для sigmoid це спрощується до: (predicted - actual)
                 double error = output - actual;
 
                 // Застосовуємо вагу + derivative
@@ -700,14 +694,15 @@ namespace SilksongNeuralNetwork
                 var hiddenSizes = new List<int>();
                 long startPos = reader.BaseStream.Position;
 
+                // ✅ ВИПРАВЛЕННЯ: зберігаємо InputSize кожного шару
                 for (int l = 0; l < layerCount - 1; l++)
                 {
-                    reader.ReadInt32();
+                    int inSize = reader.ReadInt32();  // ✅ Читаємо InputSize
                     int outSize = reader.ReadInt32();
                     int activation = reader.ReadInt32();
                     hiddenSizes.Add(outSize);
 
-                    int inSize = l == 0 ? inputSize : hiddenSizes[l - 1];
+                    // ✅ Використовуємо прочитаний inSize
                     reader.BaseStream.Position += (inSize * outSize + outSize) * sizeof(double);
                 }
 
@@ -719,9 +714,9 @@ namespace SilksongNeuralNetwork
                 {
                     foreach (var layer in net._layers)
                     {
-                        reader.ReadInt32();
-                        reader.ReadInt32();
-                        reader.ReadInt32();
+                        reader.ReadInt32(); // InputSize
+                        reader.ReadInt32(); // OutputSize
+                        reader.ReadInt32(); // Activation
 
                         for (int i = 0; i < layer.InputSize; i++)
                             for (int j = 0; j < layer.OutputSize; j++)
