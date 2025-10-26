@@ -8,15 +8,14 @@ using System.Threading.Tasks;
 
 namespace SilksongNeuralNetwork
 {
-    public class NeuralNet : IDisposable
+    public class NeuralNet
     {
         private Layer[] _layers;
-        private readonly ReaderWriterLockSlim _weightsLock = new ReaderWriterLockSlim();
-        private readonly object _bufferLock = new object();
+        private readonly object _trainingLock = new object();
+        private readonly object _predictionLock = new object();
 
-        // Thread-local кеші для предикції
-        [ThreadStatic] private static double[] _threadInputCache;
-        [ThreadStatic] private static double[][] _threadLayerCache;
+        private double[] _inputCache;
+        private double[] _outputCache;
 
         public int InputSize { get; private set; }
         public int OutputSize { get; private set; }
@@ -32,7 +31,13 @@ namespace SilksongNeuralNetwork
         public double Epsilon { get; set; } = 1e-8;
         private int _timestep = 0;
 
-        // Replay Buffer
+        // Learning rate decay
+        private double _initialLearningRate = 0.002;
+        private const int LR_DECAY_STEP_1 = 10000;
+        private const int LR_DECAY_STEP_2 = 50000;
+        private const double LR_DECAY_FACTOR_1 = 0.25;
+        private const double LR_DECAY_FACTOR_2 = 0.2;
+
         private Experience[] _replayBuffer;
         private int _bufferHead = 0;
         private int _bufferCount = 0;
@@ -40,14 +45,18 @@ namespace SilksongNeuralNetwork
         private const int BATCH_SIZE = 32;
         private const int MIN_BUFFER_SIZE = 128;
 
-        // Асинхронне навчання
-        private Task _trainingTask;
-        private CancellationTokenSource _trainingCts;
-        private readonly SemaphoreSlim _trainingSignal = new SemaphoreSlim(0);
-        private volatile bool _isTraining = false;
-        private const int TRAINING_INTERVAL_MS = 50; // Тренуємо кожні 50мс коли є дані
+        // ПОСЛІДОВНОСТІ ДІЙ - оптимізовано з фіксованим масивом
+        private FrameData[] _recentFramesArray;
+        private int _recentFramesStart = 0;
+        private int _recentFramesCount = 0;
+        private const int SEQUENCE_LENGTH = 30;
+        private int _frameCounter = 0;
+        private int _sequencesSaved = 0;
+        private int _totalFramesInSequences = 0;
 
-        // Статистика
+        private int _trainingCounter = 0;
+        private const int TRAIN_EVERY_N_CALLS = 50;
+
         private int _totalSamplesCollected = 0;
         public int TotalSamplesCollected => _totalSamplesCollected;
 
@@ -62,10 +71,26 @@ namespace SilksongNeuralNetwork
         private int[] _actionCounts;
         private int _statsCounter = 0;
 
-        // Ваги для loss function
+        // Кеш для рандому
+        private System.Random _random = new System.Random(Guid.NewGuid().GetHashCode());
+
+        // Async training
+        private Task _trainingTask;
+        private CancellationTokenSource _trainingCancellation;
+        private volatile bool _isTraining = false;
+
+        // ОНОВЛЕНІ ВАГИ
         private static readonly double[] ACTION_LOSS_WEIGHTS = {
-            0.1, 0.1, 5.0, 5.0, 8.0, 8.0, 8.0, 12.0, 12.0, 12.0, 12.0, 10.0
+            0.1, 0.1, 5.0, 5.0, 9.0, 9.0,
+            9.0, 12.0, 12.0, 10.0, 10.0, 12.0
         };
+
+        private struct FrameData
+        {
+            public float[] Input;
+            public float[] Target;
+            public int FrameId;
+        }
 
         private struct Experience
         {
@@ -83,9 +108,9 @@ namespace SilksongNeuralNetwork
             public double[] Delta;
             public double[] PreActivation;
 
-            // Optimizer state
             public double[,] WeightVelocity;
             public double[] BiasVelocity;
+
             public double[,] WeightM;
             public double[,] WeightV;
             public double[] BiasM;
@@ -106,6 +131,7 @@ namespace SilksongNeuralNetwork
 
                 WeightVelocity = new double[inputSize, outputSize];
                 BiasVelocity = new double[outputSize];
+
                 WeightM = new double[inputSize, outputSize];
                 WeightV = new double[inputSize, outputSize];
                 BiasM = new double[outputSize];
@@ -138,58 +164,67 @@ namespace SilksongNeuralNetwork
                 }
             }
 
+            // ОПТИМІЗАЦІЯ: inline forward pass
             public void Forward(double[] input, double[] output)
             {
-                for (int j = 0; j < OutputSize; j++)
+                int inputSize = InputSize;
+                int outputSize = OutputSize;
+
+                // Копіюємо input один раз
+                Buffer.BlockCopy(input, 0, Input, 0, inputSize * sizeof(double));
+
+                // Основний цикл без викликів функцій
+                for (int j = 0; j < outputSize; j++)
                 {
                     double sum = Biases[j];
-                    for (int i = 0; i < InputSize; i++)
+                    for (int i = 0; i < inputSize; i++)
                     {
                         sum += input[i] * Weights[i, j];
                     }
-                    output[j] = ApplyActivation(sum);
+                    PreActivation[j] = sum;
+
+                    // Inline activation
+                    double activated;
+                    switch (Activation)
+                    {
+                        case ActivationType.ReLU:
+                            activated = sum > 0 ? sum : 0;
+                            break;
+                        case ActivationType.LeakyReLU:
+                            activated = sum > 0 ? sum : 0.01 * sum;
+                            break;
+                        case ActivationType.Tanh:
+                            activated = Math.Tanh(sum);
+                            break;
+                        case ActivationType.Sigmoid:
+                            activated = sum >= 0
+                                ? 1.0 / (1.0 + Math.Exp(-sum))
+                                : Math.Exp(sum) / (1.0 + Math.Exp(sum));
+                            break;
+                        default:
+                            activated = sum;
+                            break;
+                    }
+
+                    output[j] = activated;
+                    Output[j] = activated;
                 }
             }
 
-            private double ApplyActivation(double x)
+            public double ActivationDerivative(int index)
             {
-                switch (Activation)
-                {
-                    case ActivationType.ReLU:
-                        return Math.Max(0, x);
+                double output = Output[index];
 
-                    case ActivationType.LeakyReLU:
-                        return x > 0 ? x : 0.01 * x;
-
-                    case ActivationType.Tanh:
-                        return Math.Tanh(x);
-
-                    case ActivationType.Sigmoid:
-                        return x >= 0
-                            ? 1.0 / (1.0 + Math.Exp(-x))
-                            : Math.Exp(x) / (1.0 + Math.Exp(x));
-
-                    default:
-                        return x;
-                }
-            }
-
-            public double ActivationDerivative(double output)
-            {
                 switch (Activation)
                 {
                     case ActivationType.ReLU:
                         return output > 0 ? 1.0 : 0.0;
-
                     case ActivationType.LeakyReLU:
                         return output > 0 ? 1.0 : 0.01;
-
                     case ActivationType.Tanh:
                         return 1.0 - output * output;
-
                     case ActivationType.Sigmoid:
                         return output * (1.0 - output);
-
                     default:
                         return 1.0;
                 }
@@ -219,11 +254,12 @@ namespace SilksongNeuralNetwork
             InputSize = inputSize;
             OutputSize = outputSize;
             LearningRate = learningRate;
+            _initialLearningRate = learningRate;
             Momentum = momentum;
 
             if (hiddenLayers == null || hiddenLayers.Length == 0)
             {
-                hiddenLayers = new int[] { 128, 64 };
+                hiddenLayers = new int[] { 256, 128, 64 };
             }
 
             InitializeNetwork(hiddenLayers);
@@ -231,12 +267,8 @@ namespace SilksongNeuralNetwork
 
             _actionCounts = new int[outputSize];
 
-            // Запускаємо асинхронне навчання
-            StartAsyncTraining();
-
-            Debug.Log($"[NeuralNet] Ініціалізовано мережу: in={InputSize}, out={OutputSize}, " +
-                     $"hidden=[{string.Join(",", hiddenLayers)}]");
-            Debug.Log($"[NeuralNet] Параметрів: {CountParameters()}");
+            // Ініціалізація async training
+            _trainingCancellation = new CancellationTokenSource();
         }
 
         private void InitializeNetwork(int[] hiddenLayers)
@@ -253,11 +285,20 @@ namespace SilksongNeuralNetwork
             layersList.Add(new Layer(previousSize, OutputSize, ActivationType.Sigmoid));
 
             _layers = layersList.ToArray();
+
+            Debug.Log($"[NeuralNet] Ініціалізовано мережу: in={InputSize}, out={OutputSize}, " +
+                     $"hidden=[{string.Join(",", hiddenLayers)}]");
+            Debug.Log($"[NeuralNet] Параметрів: {CountParameters()}");
         }
 
         private void InitializeBuffers()
         {
             _replayBuffer = new Experience[MAX_BUFFER_SIZE];
+            _inputCache = new double[InputSize];
+            _outputCache = new double[OutputSize];
+
+            // Фіксований масив замість Queue
+            _recentFramesArray = new FrameData[SEQUENCE_LENGTH];
         }
 
         private int CountParameters()
@@ -270,111 +311,63 @@ namespace SilksongNeuralNetwork
             return count;
         }
 
-        private void StartAsyncTraining()
-        {
-            _trainingCts = new CancellationTokenSource();
-            _isTraining = true;
-
-            _trainingTask = Task.Run(async () =>
-            {
-                Debug.Log("[NeuralNet] Асинхронне навчання запущено");
-
-                while (!_trainingCts.Token.IsCancellationRequested)
-                {
-                    try
-                    {
-                        // Чекаємо сигналу або timeout
-                        await _trainingSignal.WaitAsync(TRAINING_INTERVAL_MS, _trainingCts.Token);
-
-                        // Тренуємо якщо є достатньо даних
-                        if (_bufferCount >= MIN_BUFFER_SIZE)
-                        {
-                            TrainBatchAsync();
-                        }
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        break;
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.LogError($"[NeuralNet] Помилка навчання: {ex.Message}");
-                    }
-                }
-
-                Debug.Log("[NeuralNet] Асинхронне навчання зупинено");
-            }, _trainingCts.Token);
-        }
-
-        public void StopAsyncTraining()
-        {
-            if (_isTraining)
-            {
-                _isTraining = false;
-                _trainingCts?.Cancel();
-                _trainingTask?.Wait(1000); // Чекаємо максимум 1 секунду
-                Debug.Log("[NeuralNet] Навчання зупинено");
-            }
-        }
-
         public float[] Predict(float[] input)
         {
             if (input == null) throw new ArgumentNullException(nameof(input));
             if (input.Length != InputSize)
                 throw new ArgumentException($"Input size mismatch: expected {InputSize}, got {input.Length}");
 
-            // Ініціалізація thread-local кешів
-            if (_threadInputCache == null || _threadInputCache.Length != InputSize)
+            lock (_predictionLock)
             {
-                _threadInputCache = new double[InputSize];
-            }
+                // ОПТИМІЗАЦІЯ: прямий доступ без додаткових копій
+                for (int i = 0; i < InputSize; i++)
+                    _inputCache[i] = input[i];
 
-            if (_threadLayerCache == null)
-            {
-                _threadLayerCache = new double[_layers.Length][];
-                for (int i = 0; i < _layers.Length; i++)
-                {
-                    _threadLayerCache[i] = new double[_layers[i].OutputSize];
-                }
-            }
+                double[] current = _inputCache;
 
-            // Конвертація input
-            for (int i = 0; i < InputSize; i++)
-                _threadInputCache[i] = input[i];
-
-            double[] current = _threadInputCache;
-
-            // Forward pass з read lock
-            _weightsLock.EnterReadLock();
-            try
-            {
                 for (int l = 0; l < _layers.Length; l++)
                 {
-                    _layers[l].Forward(current, _threadLayerCache[l]);
-                    current = _threadLayerCache[l];
+                    var layer = _layers[l];
+                    var output = l == _layers.Length - 1 ? _outputCache : new double[layer.OutputSize];
+                    layer.Forward(current, output);
+                    current = output;
                 }
-            }
-            finally
-            {
-                _weightsLock.ExitReadLock();
-            }
 
-            // Конвертація output
-            float[] result = new float[OutputSize];
-            for (int i = 0; i < OutputSize; i++)
-                result[i] = (float)current[i];
+                float[] result = new float[OutputSize];
+                for (int i = 0; i < OutputSize; i++)
+                    result[i] = (float)_outputCache[i];
 
-            return result;
+                return result;
+            }
         }
 
+        // ОПТИМІЗАЦІЯ: CollectExperience без Queue
         public void CollectExperience(float[] input, float[] target)
         {
             if (input == null || target == null) return;
             if (input.Length != InputSize || target.Length != OutputSize) return;
 
-            // Фільтрація досвіду
+            _frameCounter++;
+
+            // Circular buffer замість Queue
+            int index = _recentFramesCount % SEQUENCE_LENGTH;
+
+            if (_recentFramesArray[index].Input == null)
+            {
+                _recentFramesArray[index].Input = new float[InputSize];
+                _recentFramesArray[index].Target = new float[OutputSize];
+            }
+
+            Array.Copy(input, _recentFramesArray[index].Input, InputSize);
+            Array.Copy(target, _recentFramesArray[index].Target, OutputSize);
+            _recentFramesArray[index].FrameId = _frameCounter;
+
+            if (_recentFramesCount < SEQUENCE_LENGTH)
+                _recentFramesCount++;
+
+            // Перевірка на важливу дію
             bool hasImportantAction = false;
-            for (int i = 2; i < target.Length; i++)
+            for (int i = 2; i < OutputSize; i++)
             {
                 if (target[i] > 0.5f)
                 {
@@ -383,29 +376,62 @@ namespace SilksongNeuralNetwork
                 }
             }
 
-            bool collectMovement = UnityEngine.Random.value < 0.2f;
-            bool hasMovement = target[0] > 0.5f || target[1] > 0.5f;
-
-            if (!hasImportantAction && hasMovement && !collectMovement)
-                return;
-
-            float priority = CalculatePriority(target);
-
-            var exp = new Experience
+            if (hasImportantAction)
             {
-                Input = new double[InputSize],
-                Target = new double[OutputSize],
-                Priority = priority
-            };
+                int framesInSequence = _recentFramesCount;
+                _sequencesSaved++;
+                _totalFramesInSequences += framesInSequence;
 
-            for (int i = 0; i < InputSize; i++)
-                exp.Input[i] = input[i];
-            for (int i = 0; i < OutputSize; i++)
-                exp.Target[i] = target[i];
+                if (_sequencesSaved % 100 == 0)
+                {
+                    float avgLength = _totalFramesInSequences / (float)_sequencesSaved;
+                    Debug.Log($"[Collector] Збережено {_sequencesSaved} послідовностей, " +
+                             $"середня довжина: {avgLength:F1} кадрів");
+                }
 
-            lock (_bufferLock)
+                int oldestFrameId = _frameCounter - framesInSequence;
+
+                for (int i = 0; i < framesInSequence; i++)
+                {
+                    var frame = _recentFramesArray[i];
+                    float temporalProgress = (frame.FrameId - oldestFrameId) / (float)framesInSequence;
+                    float temporalBoost = 1.0f + temporalProgress;
+
+                    float basePriority = CalculatePriority(frame.Target);
+                    float finalPriority = basePriority * temporalBoost;
+
+                    AddToBuffer(frame.Input, frame.Target, finalPriority);
+                }
+
+                _recentFramesCount = 0;
+            }
+            else if (UnityEngine.Random.value < 0.02f)
             {
-                _replayBuffer[_bufferHead] = exp;
+                float priority = CalculatePriority(target);
+                AddToBuffer(input, target, priority * 0.5f);
+            }
+        }
+
+        private void AddToBuffer(float[] input, float[] target, float priority)
+        {
+            lock (_trainingLock)
+            {
+                // ОПТИМІЗАЦІЯ: Переиспользуем існуючі об'єкти
+                ref Experience exp = ref _replayBuffer[_bufferHead];
+
+                if (exp.Input == null)
+                {
+                    exp.Input = new double[InputSize];
+                    exp.Target = new double[OutputSize];
+                }
+
+                for (int i = 0; i < InputSize; i++)
+                    exp.Input[i] = input[i];
+                for (int i = 0; i < OutputSize; i++)
+                    exp.Target[i] = target[i];
+
+                exp.Priority = priority;
+
                 _bufferHead = (_bufferHead + 1) % MAX_BUFFER_SIZE;
                 if (_bufferCount < MAX_BUFFER_SIZE)
                     _bufferCount++;
@@ -418,125 +444,165 @@ namespace SilksongNeuralNetwork
             }
 
             Interlocked.Increment(ref _totalSamplesCollected);
-
-            // Сигналізуємо про нові дані
-            if (_trainingSignal.CurrentCount == 0)
-                _trainingSignal.Release();
         }
 
         private float CalculatePriority(float[] target)
         {
             float priority = 1.0f;
 
-            if (target[0] > 0.5f || target[1] > 0.5f)
-                priority *= 0.3f;
-
-            for (int i = 2; i < Math.Min(target.Length, ACTION_LOSS_WEIGHTS.Length); i++)
-            {
-                if (target[i] > 0.5f)
-                    priority *= (float)ACTION_LOSS_WEIGHTS[i];
-            }
+            if (target[0] > 0.5f || target[1] > 0.5f) priority *= 0.1f;
+            if (target[2] > 0.5f) priority *= 5.0f;
+            if (target[3] > 0.5f) priority *= 5.0f;
+            if (target[4] > 0.5f) priority *= 9.0f;
+            if (target[5] > 0.5f) priority *= 9.0f;
+            if (target[6] > 0.5f) priority *= 9.0f;
+            if (target[7] > 0.5f) priority *= 12.0f;
+            if (target[8] > 0.5f) priority *= 12.0f;
+            if (target[9] > 0.5f) priority *= 10.0f;
+            if (target[10] > 0.5f) priority *= 10.0f;
+            if (target[11] > 0.5f) priority *= 8.0f;
 
             return priority;
         }
 
-        // Публічний метод для сумісності (синхронний виклик)
+        // КРИТИЧНА ОПТИМІЗАЦІЯ: Async training
         public double TrainBatch()
         {
-            return TrainBatchInternal();
-        }
-
-        private double TrainBatchInternal()
-        {
+            _trainingCounter++;
             _statsCounter++;
+
+            if (_trainingCounter % 10000 == 0)
+                ApplyLearningRateDecay();
+
             if (_statsCounter >= 500)
             {
                 LogActionStatistics();
                 _statsCounter = 0;
             }
 
-            // Копіюємо batch для навчання
-            Experience[] batch;
-            int batchCount;
-            double totalPriority;
+            if (_trainingCounter % TRAIN_EVERY_N_CALLS != 0)
+                return _lastBatchError;
 
-            lock (_bufferLock)
+            // Якщо вже тренується - пропускаємо
+            if (_isTraining)
+                return _lastBatchError;
+
+            lock (_trainingLock)
             {
                 if (_bufferCount < MIN_BUFFER_SIZE)
-                    return _lastBatchError;
+                    return 0;
 
-                batchCount = Math.Min(BATCH_SIZE, _bufferCount);
-                batch = new Experience[batchCount];
+                // Запускаємо асинхронно
+                _isTraining = true;
+                Task.Run(() => TrainBatchAsync());
+            }
 
-                totalPriority = 0;
+            return _lastBatchError;
+        }
+
+        private void TrainBatchAsync()
+        {
+            try
+            {
+                double totalError = 0;
+                var usedIndices = new HashSet<int>();
+
+                double totalPriority = 0;
                 for (int i = 0; i < _bufferCount; i++)
                 {
                     totalPriority += _replayBuffer[i].Priority;
                 }
 
-                // Sampling by priority
-                var random = new System.Random();
-                var usedIndices = new HashSet<int>();
+                int actualBatchSize = Math.Min(BATCH_SIZE, _bufferCount);
 
-                for (int i = 0; i < batchCount; i++)
+                for (int i = 0; i < actualBatchSize; i++)
                 {
-                    int idx = SampleByPriority(random, totalPriority, _bufferCount);
+                    int idx = SampleByPriority(_random, totalPriority);
 
                     int attempts = 0;
                     while (usedIndices.Contains(idx) && attempts < 100)
                     {
-                        idx = SampleByPriority(random, totalPriority, _bufferCount);
+                        idx = SampleByPriority(_random, totalPriority);
                         attempts++;
                     }
 
                     usedIndices.Add(idx);
-                    batch[i] = _replayBuffer[idx];
+                    var exp = _replayBuffer[idx];
+                    totalError += TrainSingle(exp.Input, exp.Target);
                 }
-            }
 
-            // Навчання на batch з write lock
-            double totalError = 0;
+                _lastBatchError = totalError / actualBatchSize;
+                _runningAvgError = _runningAvgError * ERROR_SMOOTHING + _lastBatchError * (1 - ERROR_SMOOTHING);
 
-            _weightsLock.EnterWriteLock();
-            try
-            {
-                for (int i = 0; i < batchCount; i++)
+                if (_timestep % 1000 == 0)
                 {
-                    totalError += TrainSingle(batch[i].Input, batch[i].Target);
+                    LogPredictionSample();
                 }
-
-                UpdateWeights();
             }
             finally
             {
-                _weightsLock.ExitWriteLock();
+                _isTraining = false;
+            }
+        }
+
+        private void ApplyLearningRateDecay()
+        {
+            if (_timestep == LR_DECAY_STEP_1)
+            {
+                LearningRate = _initialLearningRate * LR_DECAY_FACTOR_1;
+                Debug.Log($"[NeuralNet] Learning rate decay: {LearningRate:F6} (timestep {_timestep})");
+            }
+            else if (_timestep == LR_DECAY_STEP_2)
+            {
+                LearningRate = _initialLearningRate * LR_DECAY_FACTOR_1 * LR_DECAY_FACTOR_2;
+                Debug.Log($"[NeuralNet] Learning rate decay: {LearningRate:F6} (timestep {_timestep})");
+            }
+        }
+
+        private void LogPredictionSample()
+        {
+            if (_bufferCount == 0) return;
+
+            var sample = _replayBuffer[UnityEngine.Random.Range(0, _bufferCount)];
+
+            double[] predictions = new double[OutputSize];
+            double[] current = sample.Input;
+
+            for (int l = 0; l < _layers.Length; l++)
+            {
+                var output = new double[_layers[l].OutputSize];
+                _layers[l].Forward(current, output);
+                current = output;
             }
 
-            _lastBatchError = totalError / batchCount;
-            _runningAvgError = _runningAvgError * ERROR_SMOOTHING + _lastBatchError * (1 - ERROR_SMOOTHING);
+            Array.Copy(current, predictions, OutputSize);
 
-            return _lastBatchError;
+            string log = "[NeuralNet] Sample prediction vs target:\n";
+            string[] actionNames = {
+                "Right", "Left", "Jump", "Dash", "Attack", "DownAttack",
+                "UpAttack", "Cast", "MainAbility", "FirstTool", "SecondTool", "HarpoonDash"
+            };
+
+            for (int i = 0; i < Math.Min(OutputSize, actionNames.Length); i++)
+            {
+                log += $"  {actionNames[i]}: pred={predictions[i]:F3}, target={sample.Target[i]:F3}\n";
+            }
+            Debug.Log(log);
         }
 
-        // Асинхронна версія (викликається з фонового потоку)
-        private void TrainBatchAsync()
-        {
-            TrainBatchInternal();
-        }
-
-        private int SampleByPriority(System.Random random, double totalPriority, int count)
+        private int SampleByPriority(System.Random random, double totalPriority)
         {
             double randomValue = random.NextDouble() * totalPriority;
             double cumulative = 0;
 
-            for (int i = 0; i < count; i++)
+            for (int i = 0; i < _bufferCount; i++)
             {
                 cumulative += _replayBuffer[i].Priority;
                 if (randomValue <= cumulative)
                     return i;
             }
 
-            return count - 1;
+            return _bufferCount - 1;
         }
 
         private void LogActionStatistics()
@@ -546,30 +612,35 @@ namespace SilksongNeuralNetwork
                 "UpAttack", "Cast", "MainAbility", "FirstTool", "SecondTool", "HarpoonDash"
             };
 
-            string stats = "[NeuralNet] Action Distribution:\n";
+            string stats = $"[NeuralNet] Action Distribution (buffer={_bufferCount}/{MAX_BUFFER_SIZE}):\n";
             int total = _actionCounts.Sum();
+
             for (int i = 0; i < Math.Min(_actionCounts.Length, actionNames.Length); i++)
             {
                 float percentage = total > 0 ? (_actionCounts[i] * 100.0f / total) : 0;
                 stats += $"  {actionNames[i]}: {_actionCounts[i]} ({percentage:F1}%)\n";
             }
+
+            stats += $"Last batch error: {_lastBatchError:F5} | " +
+                    $"Running avg: {_runningAvgError:F5} | " +
+                    $"LR: {LearningRate:F6} | " +
+                    $"Timestep: {_timestep}";
+
             Debug.Log(stats);
         }
 
         private double TrainSingle(double[] input, double[] target)
         {
             double[] current = input;
+            double[][] layerOutputs = new double[_layers.Length][];
 
-            // Forward pass
             for (int l = 0; l < _layers.Length; l++)
             {
-                var layer = _layers[l];
-                Array.Copy(current, layer.Input, current.Length);
-                layer.Forward(current, layer.Output);
-                current = layer.Output;
+                layerOutputs[l] = new double[_layers[l].OutputSize];
+                _layers[l].Forward(current, layerOutputs[l]);
+                current = layerOutputs[l];
             }
 
-            // Binary Cross-Entropy Loss з вагами
             double weightedError = 0;
             double totalWeight = 0;
 
@@ -587,8 +658,8 @@ namespace SilksongNeuralNetwork
 
             double error = weightedError / totalWeight;
 
-            // Backpropagation
             BackpropagateWeighted(target);
+            UpdateWeights();
 
             return error;
         }
@@ -601,9 +672,10 @@ namespace SilksongNeuralNetwork
             {
                 double output = Math.Max(1e-7, Math.Min(1 - 1e-7, outputLayer.Output[i]));
                 double actual = target[i];
+
                 double error = output - actual;
                 double weight = ACTION_LOSS_WEIGHTS[i];
-                outputLayer.Delta[i] = error * weight * outputLayer.ActivationDerivative(output);
+                outputLayer.Delta[i] = error * weight * outputLayer.ActivationDerivative(i);
             }
 
             for (int l = _layers.Length - 2; l >= 0; l--)
@@ -618,7 +690,7 @@ namespace SilksongNeuralNetwork
                     {
                         sum += nextLayer.Delta[j] * nextLayer.Weights[i, j];
                     }
-                    currentLayer.Delta[i] = sum * currentLayer.ActivationDerivative(currentLayer.Output[i]);
+                    currentLayer.Delta[i] = sum * currentLayer.ActivationDerivative(i);
                 }
             }
         }
@@ -713,8 +785,7 @@ namespace SilksongNeuralNetwork
 
             Directory.CreateDirectory(Path.GetDirectoryName(path));
 
-            _weightsLock.EnterReadLock();
-            try
+            lock (_trainingLock)
             {
                 using (var writer = new BinaryWriter(File.Open(path, FileMode.Create)))
                 {
@@ -736,10 +807,6 @@ namespace SilksongNeuralNetwork
                             writer.Write(layer.Biases[j]);
                     }
                 }
-            }
-            finally
-            {
-                _weightsLock.ExitReadLock();
             }
 
             Debug.Log($"[NeuralNet] Збережено в: {path}");
@@ -772,14 +839,13 @@ namespace SilksongNeuralNetwork
 
                 reader.BaseStream.Position = startPos;
 
-                net._weightsLock.EnterWriteLock();
-                try
+                lock (net._trainingLock)
                 {
                     foreach (var layer in net._layers)
                     {
-                        reader.ReadInt32();
-                        reader.ReadInt32();
-                        reader.ReadInt32();
+                        reader.ReadInt32(); // InputSize
+                        reader.ReadInt32(); // OutputSize
+                        reader.ReadInt32(); // Activation
 
                         for (int i = 0; i < layer.InputSize; i++)
                             for (int j = 0; j < layer.OutputSize; j++)
@@ -789,10 +855,6 @@ namespace SilksongNeuralNetwork
                             layer.Biases[j] = reader.ReadDouble();
                     }
                 }
-                finally
-                {
-                    net._weightsLock.ExitWriteLock();
-                }
 
                 Debug.Log($"[NeuralNet] Завантажено з: {path}");
                 return net;
@@ -801,29 +863,115 @@ namespace SilksongNeuralNetwork
 
         public void ClearBuffer()
         {
-            lock (_bufferLock)
+            lock (_trainingLock)
             {
                 _bufferHead = 0;
                 _bufferCount = 0;
+                _recentFramesCount = 0;
+                _frameCounter = 0;
+                _sequencesSaved = 0;
+                _totalFramesInSequences = 0;
                 Array.Clear(_actionCounts, 0, _actionCounts.Length);
             }
         }
 
         public string GetStats()
         {
+            float avgSeqLength = _sequencesSaved > 0 ? _totalFramesInSequences / (float)_sequencesSaved : 0;
+
             return $"Buffer: {_bufferCount}/{MAX_BUFFER_SIZE} | " +
                    $"Samples: {_totalSamplesCollected} | " +
+                   $"Sequences: {_sequencesSaved} (avg {avgSeqLength:F1} frames) | " +
                    $"Error: {_lastBatchError:F5} | " +
                    $"AvgError: {_runningAvgError:F5} | " +
-                   $"Training: {(_isTraining ? "Active" : "Stopped")}";
+                   $"LR: {LearningRate:F6}";
         }
 
-        public void Dispose()
+        private void LogMultiLabelStats()
         {
-            StopAsyncTraining();
-            _trainingCts?.Dispose();
-            _trainingSignal?.Dispose();
-            _weightsLock?.Dispose();
+            lock (_trainingLock)
+            {
+                int[] comboCounts = new int[OutputSize * OutputSize];
+
+                for (int i = 0; i < _bufferCount; i++)
+                {
+                    var target = _replayBuffer[i].Target;
+
+                    for (int a = 0; a < OutputSize; a++)
+                    {
+                        if (target[a] > 0.5)
+                        {
+                            for (int b = a + 1; b < OutputSize; b++)
+                            {
+                                if (target[b] > 0.5)
+                                {
+                                    comboCounts[a * OutputSize + b]++;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Debug.Log("[NeuralNet] Top action combinations:");
+                var topCombos = comboCounts
+                    .Select((count, idx) => new { Count = count, A = idx / OutputSize, B = idx % OutputSize })
+                    .Where(x => x.Count > 0)
+                    .OrderByDescending(x => x.Count)
+                    .Take(10);
+
+                string[] actionNames = {
+                    "Right", "Left", "Jump", "Dash", "Attack", "DownAttack",
+                    "UpAttack", "Cast", "MainAbility", "FirstTool", "SecondTool", "HarpoonDash"
+                };
+
+                foreach (var combo in topCombos)
+                {
+                    Debug.Log($"  {actionNames[combo.A]} + {actionNames[combo.B]}: {combo.Count}");
+                }
+
+                int rightLeftConflicts = comboCounts[0 * OutputSize + 1];
+                if (rightLeftConflicts > 0)
+                {
+                    Debug.LogWarning($"⚠️ Right+Left conflicts detected: {rightLeftConflicts}");
+                }
+            }
+        }
+
+        public Dictionary<string, float> GetDetailedMetrics()
+        {
+            var metrics = new Dictionary<string, float>();
+            LogMultiLabelStats();
+
+            lock (_trainingLock)
+            {
+                for (int i = 0; i < OutputSize; i++)
+                {
+                    float avgActivation = 0;
+                    int count = 0;
+
+                    for (int j = 0; j < _bufferCount; j++)
+                    {
+                        avgActivation += (float)_replayBuffer[j].Target[i];
+                        count++;
+                    }
+
+                    metrics[$"action_{i}_avg"] = count > 0 ? avgActivation / count : 0;
+                }
+
+                metrics["buffer_fill"] = _bufferCount / (float)MAX_BUFFER_SIZE;
+                metrics["sequences_saved"] = _sequencesSaved;
+                metrics["avg_sequence_length"] = _sequencesSaved > 0 ?
+                    _totalFramesInSequences / (float)_sequencesSaved : 0;
+            }
+
+            return metrics;
+        }
+
+        // Cleanup при знищенні об'єкта
+        ~NeuralNet()
+        {
+            _trainingCancellation?.Cancel();
+            _trainingCancellation?.Dispose();
         }
     }
 }

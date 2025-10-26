@@ -20,13 +20,13 @@ namespace SilksongNeuralNetwork
         {
             // Налаштовуємо всі системи променів
             RaySensorSystem.Initialize(
-                obstacleRayCount: 12,
+                obstacleRayCount: 20,
                 obstacleMaxDistance: 12f,
-                enemyRayCount: 16,
+                enemyRayCount: 72,
                 enemyMaxDistance: 25f,
-                enemyProjectilesRayCount: 20,
-                enemyProjectilesMaxDistance: 12f,
-                interactiveObjectRayCount: 20,
+                enemyProjectilesRayCount: 36,
+                enemyProjectilesMaxDistance: 25f,
+                interactiveObjectRayCount: 36,
                 interactiveObjectMaxDistance: 15f
             );
         }
@@ -61,11 +61,26 @@ namespace SilksongNeuralNetwork
             {
                 if (i < sortedEnemies.Count)
                 {
-                    enemyData.Add(Normalize(sortedEnemies[i].distance, searchRadius));
+                    var enemy = sortedEnemies[i];
+
+                    // Відстань (нормалізована)
+                    enemyData.Add(Normalize(enemy.distance, searchRadius));
+
+                    //Напрямок до ворога (X, Y)
+                    Vector2 directionToEnemy = (enemy.enemyTransform.position - heroPosition).normalized;
+                    enemyData.Add((directionToEnemy.x + 1f) / 2f); // Нормалізуємо [-1,1] -> [0,1]
+                    enemyData.Add((directionToEnemy.y + 1f) / 2f);
+
+                    // Чи ворог в межах атаки?
+                    bool inAttackRange = enemy.distance < 3f; // Налаштуйте під вашу гру
+                    enemyData.Add(BoolToFloat(inAttackRange));
                 }
                 else
                 {
-                    enemyData.Add(1f);
+                    enemyData.Add(1f); // Відстань
+                    enemyData.Add(0.5f); // X напрямок (центр)
+                    enemyData.Add(0.5f); // Y напрямок (центр)
+                    enemyData.Add(0f); // Не в межах атаки
                 }
             }
 
