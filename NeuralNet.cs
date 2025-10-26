@@ -5,16 +5,17 @@ using System.Linq;
 using UnityEngine;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Runtime.CompilerServices;
 
 namespace SilksongNeuralNetwork
 {
     public class NeuralNet : IDisposable
     {
         private Layer[] _layers;
-        private readonly ReaderWriterLockSlim _weightsLock = new ReaderWriterLockSlim();
+        private Layer[] _trainingLayers;
+        private readonly object _swapLock = new object();
         private readonly object _bufferLock = new object();
 
-        // Thread-local кеші для предикції
         [ThreadStatic] private static double[] _threadInputCache;
         [ThreadStatic] private static double[][] _threadLayerCache;
 
@@ -32,7 +33,6 @@ namespace SilksongNeuralNetwork
         public double Epsilon { get; set; } = 1e-8;
         private int _timestep = 0;
 
-        // Replay Buffer
         private Experience[] _replayBuffer;
         private int _bufferHead = 0;
         private int _bufferCount = 0;
@@ -40,14 +40,14 @@ namespace SilksongNeuralNetwork
         private const int BATCH_SIZE = 32;
         private const int MIN_BUFFER_SIZE = 128;
 
-        // Асинхронне навчання
         private Task _trainingTask;
         private CancellationTokenSource _trainingCts;
         private readonly SemaphoreSlim _trainingSignal = new SemaphoreSlim(0);
         private volatile bool _isTraining = false;
-        private const int TRAINING_INTERVAL_MS = 50; // Тренуємо кожні 50мс коли є дані
+        private const int TRAINING_INTERVAL_MS = 50;
+        private const int SWAP_INTERVAL = 5;
+        private int _batchesSinceSwap = 0;
 
-        // Статистика
         private int _totalSamplesCollected = 0;
         public int TotalSamplesCollected => _totalSamplesCollected;
 
@@ -62,7 +62,6 @@ namespace SilksongNeuralNetwork
         private int[] _actionCounts;
         private int _statsCounter = 0;
 
-        // Ваги для loss function
         private static readonly double[] ACTION_LOSS_WEIGHTS = {
             0.1, 0.1, 5.0, 5.0, 8.0, 8.0, 8.0, 12.0, 12.0, 12.0, 12.0, 10.0
         };
@@ -81,9 +80,7 @@ namespace SilksongNeuralNetwork
             public double[] Output;
             public double[] Input;
             public double[] Delta;
-            public double[] PreActivation;
 
-            // Optimizer state
             public double[,] WeightVelocity;
             public double[] BiasVelocity;
             public double[,] WeightM;
@@ -102,7 +99,6 @@ namespace SilksongNeuralNetwork
                 Output = new double[outputSize];
                 Input = new double[inputSize];
                 Delta = new double[outputSize];
-                PreActivation = new double[outputSize];
 
                 WeightVelocity = new double[inputSize, outputSize];
                 BiasVelocity = new double[outputSize];
@@ -138,60 +134,121 @@ namespace SilksongNeuralNetwork
                 }
             }
 
-            public void Forward(double[] input, double[] output)
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public void ForwardOptimized(double[] input, double[] output)
             {
-                for (int j = 0; j < OutputSize; j++)
+                int outSize = OutputSize;
+                int inSize = InputSize;
+
+                for (int j = 0; j < outSize; j++)
                 {
                     double sum = Biases[j];
-                    for (int i = 0; i < InputSize; i++)
+
+                    int i = 0;
+                    int unrollCount = inSize - (inSize % 4);
+
+                    for (; i < unrollCount; i += 4)
+                    {
+                        sum += input[i] * Weights[i, j];
+                        sum += input[i + 1] * Weights[i + 1, j];
+                        sum += input[i + 2] * Weights[i + 2, j];
+                        sum += input[i + 3] * Weights[i + 3, j];
+                    }
+
+                    for (; i < inSize; i++)
                     {
                         sum += input[i] * Weights[i, j];
                     }
+
                     output[j] = ApplyActivation(sum);
                 }
             }
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             private double ApplyActivation(double x)
             {
                 switch (Activation)
                 {
                     case ActivationType.ReLU:
-                        return Math.Max(0, x);
-
+                        return x > 0 ? x : 0;
                     case ActivationType.LeakyReLU:
                         return x > 0 ? x : 0.01 * x;
-
                     case ActivationType.Tanh:
                         return Math.Tanh(x);
-
                     case ActivationType.Sigmoid:
-                        return x >= 0
-                            ? 1.0 / (1.0 + Math.Exp(-x))
-                            : Math.Exp(x) / (1.0 + Math.Exp(x));
-
+                        return x >= 0 ? 1.0 / (1.0 + Math.Exp(-x)) : Math.Exp(x) / (1.0 + Math.Exp(x));
                     default:
                         return x;
                 }
             }
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public double ActivationDerivative(double output)
             {
                 switch (Activation)
                 {
                     case ActivationType.ReLU:
                         return output > 0 ? 1.0 : 0.0;
-
                     case ActivationType.LeakyReLU:
                         return output > 0 ? 1.0 : 0.01;
-
                     case ActivationType.Tanh:
                         return 1.0 - output * output;
-
                     case ActivationType.Sigmoid:
                         return output * (1.0 - output);
-
                     default:
                         return 1.0;
+                }
+            }
+
+            public void CopyWeightsFrom(Layer source)
+            {
+                if (source == null || source.Weights == null || source.Biases == null) return;
+
+                int weightsLength = Math.Min(Weights.Length, source.Weights.Length);
+                int biasesLength = Math.Min(Biases.Length, source.Biases.Length);
+
+                Buffer.BlockCopy(source.Weights, 0, Weights, 0, weightsLength * sizeof(double));
+                Buffer.BlockCopy(source.Biases, 0, Biases, 0, biasesLength * sizeof(double));
+            }
+
+            public void CopyOptimizerStateFrom(Layer source)
+            {
+                if (source == null) return;
+
+                if (source.WeightVelocity != null && WeightVelocity != null)
+                {
+                    int length = Math.Min(WeightVelocity.Length, source.WeightVelocity.Length);
+                    Buffer.BlockCopy(source.WeightVelocity, 0, WeightVelocity, 0, length * sizeof(double));
+                }
+
+                if (source.BiasVelocity != null && BiasVelocity != null)
+                {
+                    int length = Math.Min(BiasVelocity.Length, source.BiasVelocity.Length);
+                    Buffer.BlockCopy(source.BiasVelocity, 0, BiasVelocity, 0, length * sizeof(double));
+                }
+
+                if (source.WeightM != null && WeightM != null)
+                {
+                    int length = Math.Min(WeightM.Length, source.WeightM.Length);
+                    Buffer.BlockCopy(source.WeightM, 0, WeightM, 0, length * sizeof(double));
+                }
+
+                if (source.WeightV != null && WeightV != null)
+                {
+                    int length = Math.Min(WeightV.Length, source.WeightV.Length);
+                    Buffer.BlockCopy(source.WeightV, 0, WeightV, 0, length * sizeof(double));
+                }
+
+                if (source.BiasM != null && BiasM != null)
+                {
+                    int length = Math.Min(BiasM.Length, source.BiasM.Length);
+                    Buffer.BlockCopy(source.BiasM, 0, BiasM, 0, length * sizeof(double));
+                }
+
+                if (source.BiasV != null && BiasV != null)
+                {
+                    int length = Math.Min(BiasV.Length, source.BiasV.Length);
+                    Buffer.BlockCopy(source.BiasV, 0, BiasV, 0, length * sizeof(double));
                 }
             }
         }
@@ -231,7 +288,6 @@ namespace SilksongNeuralNetwork
 
             _actionCounts = new int[outputSize];
 
-            // Запускаємо асинхронне навчання
             StartAsyncTraining();
 
             Debug.Log($"[NeuralNet] Ініціалізовано мережу: in={InputSize}, out={OutputSize}, " +
@@ -253,6 +309,15 @@ namespace SilksongNeuralNetwork
             layersList.Add(new Layer(previousSize, OutputSize, ActivationType.Sigmoid));
 
             _layers = layersList.ToArray();
+
+            _trainingLayers = new Layer[_layers.Length];
+            for (int i = 0; i < _layers.Length; i++)
+            {
+                var original = _layers[i];
+                _trainingLayers[i] = new Layer(original.InputSize, original.OutputSize, original.Activation);
+                _trainingLayers[i].CopyWeightsFrom(original);
+                _trainingLayers[i].CopyOptimizerStateFrom(original);
+            }
         }
 
         private void InitializeBuffers()
@@ -277,16 +342,14 @@ namespace SilksongNeuralNetwork
 
             _trainingTask = Task.Run(async () =>
             {
-                Debug.Log("[NeuralNet] Асинхронне навчання запущено");
+                Debug.Log("[NeuralNet] Асинхронне навчання запущено (оптимізоване)");
 
                 while (!_trainingCts.Token.IsCancellationRequested)
                 {
                     try
                     {
-                        // Чекаємо сигналу або timeout
                         await _trainingSignal.WaitAsync(TRAINING_INTERVAL_MS, _trainingCts.Token);
 
-                        // Тренуємо якщо є достатньо даних
                         if (_bufferCount >= MIN_BUFFER_SIZE)
                         {
                             TrainBatchAsync();
@@ -298,7 +361,7 @@ namespace SilksongNeuralNetwork
                     }
                     catch (Exception ex)
                     {
-                        Debug.LogError($"[NeuralNet] Помилка навчання: {ex.Message}");
+                        Debug.LogError($"[NeuralNet] Помилка навчання: {ex.Message}\n{ex.StackTrace}");
                     }
                 }
 
@@ -312,7 +375,7 @@ namespace SilksongNeuralNetwork
             {
                 _isTraining = false;
                 _trainingCts?.Cancel();
-                _trainingTask?.Wait(1000); // Чекаємо максимум 1 секунду
+                _trainingTask?.Wait(1000);
                 Debug.Log("[NeuralNet] Навчання зупинено");
             }
         }
@@ -323,43 +386,43 @@ namespace SilksongNeuralNetwork
             if (input.Length != InputSize)
                 throw new ArgumentException($"Input size mismatch: expected {InputSize}, got {input.Length}");
 
-            // Ініціалізація thread-local кешів
             if (_threadInputCache == null || _threadInputCache.Length != InputSize)
             {
                 _threadInputCache = new double[InputSize];
             }
 
-            if (_threadLayerCache == null)
+            if (_threadLayerCache == null || _threadLayerCache.Length != _layers.Length)
             {
                 _threadLayerCache = new double[_layers.Length][];
                 for (int i = 0; i < _layers.Length; i++)
                 {
-                    _threadLayerCache[i] = new double[_layers[i].OutputSize];
+                    if (_layers[i] != null)
+                        _threadLayerCache[i] = new double[_layers[i].OutputSize];
                 }
             }
 
-            // Конвертація input
             for (int i = 0; i < InputSize; i++)
                 _threadInputCache[i] = input[i];
 
             double[] current = _threadInputCache;
 
-            // Forward pass з read lock
-            _weightsLock.EnterReadLock();
-            try
+            var activeLayers = _layers;
+
+            if (activeLayers == null)
+                throw new InvalidOperationException("Neural network layers are not initialized");
+
+            for (int l = 0; l < activeLayers.Length; l++)
             {
-                for (int l = 0; l < _layers.Length; l++)
-                {
-                    _layers[l].Forward(current, _threadLayerCache[l]);
-                    current = _threadLayerCache[l];
-                }
-            }
-            finally
-            {
-                _weightsLock.ExitReadLock();
+                if (activeLayers[l] == null)
+                    throw new InvalidOperationException($"Layer {l} is null");
+
+                if (_threadLayerCache[l] == null || _threadLayerCache[l].Length != activeLayers[l].OutputSize)
+                    _threadLayerCache[l] = new double[activeLayers[l].OutputSize];
+
+                activeLayers[l].ForwardOptimized(current, _threadLayerCache[l]);
+                current = _threadLayerCache[l];
             }
 
-            // Конвертація output
             float[] result = new float[OutputSize];
             for (int i = 0; i < OutputSize; i++)
                 result[i] = (float)current[i];
@@ -372,7 +435,6 @@ namespace SilksongNeuralNetwork
             if (input == null || target == null) return;
             if (input.Length != InputSize || target.Length != OutputSize) return;
 
-            // Фільтрація досвіду
             bool hasImportantAction = false;
             for (int i = 2; i < target.Length; i++)
             {
@@ -419,11 +481,19 @@ namespace SilksongNeuralNetwork
 
             Interlocked.Increment(ref _totalSamplesCollected);
 
-            // Сигналізуємо про нові дані
             if (_trainingSignal.CurrentCount == 0)
-                _trainingSignal.Release();
+            {
+                try
+                {
+                    _trainingSignal.Release();
+                }
+                catch (SemaphoreFullException)
+                {
+                }
+            }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private float CalculatePriority(float[] target)
         {
             float priority = 1.0f;
@@ -440,7 +510,6 @@ namespace SilksongNeuralNetwork
             return priority;
         }
 
-        // Публічний метод для сумісності (синхронний виклик)
         public double TrainBatch()
         {
             return TrainBatchInternal();
@@ -455,7 +524,6 @@ namespace SilksongNeuralNetwork
                 _statsCounter = 0;
             }
 
-            // Копіюємо batch для навчання
             Experience[] batch;
             int batchCount;
             double totalPriority;
@@ -474,7 +542,6 @@ namespace SilksongNeuralNetwork
                     totalPriority += _replayBuffer[i].Priority;
                 }
 
-                // Sampling by priority
                 var random = new System.Random();
                 var usedIndices = new HashSet<int>();
 
@@ -494,36 +561,70 @@ namespace SilksongNeuralNetwork
                 }
             }
 
-            // Навчання на batch з write lock
             double totalError = 0;
 
-            _weightsLock.EnterWriteLock();
-            try
+            for (int i = 0; i < batchCount; i++)
             {
-                for (int i = 0; i < batchCount; i++)
-                {
-                    totalError += TrainSingle(batch[i].Input, batch[i].Target);
-                }
+                totalError += TrainSingle(batch[i].Input, batch[i].Target);
+            }
 
-                UpdateWeights();
-            }
-            finally
-            {
-                _weightsLock.ExitWriteLock();
-            }
+            UpdateWeights();
 
             _lastBatchError = totalError / batchCount;
             _runningAvgError = _runningAvgError * ERROR_SMOOTHING + _lastBatchError * (1 - ERROR_SMOOTHING);
 
+            _batchesSinceSwap++;
+            if (_batchesSinceSwap >= SWAP_INTERVAL)
+            {
+                SwapLayers();
+                _batchesSinceSwap = 0;
+            }
+
             return _lastBatchError;
         }
 
-        // Асинхронна версія (викликається з фонового потоку)
         private void TrainBatchAsync()
         {
-            TrainBatchInternal();
+            try
+            {
+                TrainBatchInternal();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[NeuralNet] TrainBatchAsync error: {ex.Message}\n{ex.StackTrace}");
+            }
         }
 
+        private void SwapLayers()
+        {
+            lock (_swapLock)
+            {
+                try
+                {
+                    for (int i = 0; i < _layers.Length; i++)
+                    {
+                        if (_layers[i] != null && _trainingLayers[i] != null)
+                        {
+                            _layers[i].CopyWeightsFrom(_trainingLayers[i]);
+                        }
+                    }
+
+                    for (int i = 0; i < _trainingLayers.Length; i++)
+                    {
+                        if (_trainingLayers[i] != null && _layers[i] != null)
+                        {
+                            _trainingLayers[i].CopyOptimizerStateFrom(_layers[i]);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError($"[NeuralNet] SwapLayers error: {ex.Message}");
+                }
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private int SampleByPriority(System.Random random, double totalPriority, int count)
         {
             double randomValue = random.NextDouble() * totalPriority;
@@ -558,18 +659,22 @@ namespace SilksongNeuralNetwork
 
         private double TrainSingle(double[] input, double[] target)
         {
+            if (_trainingLayers == null || input == null || target == null)
+                return 0;
+
             double[] current = input;
 
-            // Forward pass
-            for (int l = 0; l < _layers.Length; l++)
+            for (int l = 0; l < _trainingLayers.Length; l++)
             {
-                var layer = _layers[l];
-                Array.Copy(current, layer.Input, current.Length);
-                layer.Forward(current, layer.Output);
+                var layer = _trainingLayers[l];
+                if (layer == null) continue;
+
+                Buffer.BlockCopy(current, 0, layer.Input, 0,
+                    Math.Min(current.Length, layer.Input.Length) * sizeof(double));
+                layer.ForwardOptimized(current, layer.Output);
                 current = layer.Output;
             }
 
-            // Binary Cross-Entropy Loss з вагами
             double weightedError = 0;
             double totalWeight = 0;
 
@@ -580,14 +685,13 @@ namespace SilksongNeuralNetwork
 
                 double bce = -(actual * Math.Log(predicted) + (1 - actual) * Math.Log(1 - predicted));
 
-                double weight = ACTION_LOSS_WEIGHTS[i];
+                double weight = i < ACTION_LOSS_WEIGHTS.Length ? ACTION_LOSS_WEIGHTS[i] : 1.0;
                 weightedError += bce * weight;
                 totalWeight += weight;
             }
 
             double error = weightedError / totalWeight;
 
-            // Backpropagation
             BackpropagateWeighted(target);
 
             return error;
@@ -595,21 +699,27 @@ namespace SilksongNeuralNetwork
 
         private void BackpropagateWeighted(double[] target)
         {
-            var outputLayer = _layers[_layers.Length - 1];
+            if (_trainingLayers == null || _trainingLayers.Length == 0)
+                return;
+
+            var outputLayer = _trainingLayers[_trainingLayers.Length - 1];
+            if (outputLayer == null) return;
 
             for (int i = 0; i < outputLayer.OutputSize; i++)
             {
                 double output = Math.Max(1e-7, Math.Min(1 - 1e-7, outputLayer.Output[i]));
                 double actual = target[i];
                 double error = output - actual;
-                double weight = ACTION_LOSS_WEIGHTS[i];
+                double weight = i < ACTION_LOSS_WEIGHTS.Length ? ACTION_LOSS_WEIGHTS[i] : 1.0;
                 outputLayer.Delta[i] = error * weight * outputLayer.ActivationDerivative(output);
             }
 
-            for (int l = _layers.Length - 2; l >= 0; l--)
+            for (int l = _trainingLayers.Length - 2; l >= 0; l--)
             {
-                var currentLayer = _layers[l];
-                var nextLayer = _layers[l + 1];
+                var currentLayer = _trainingLayers[l];
+                var nextLayer = _trainingLayers[l + 1];
+
+                if (currentLayer == null || nextLayer == null) continue;
 
                 for (int i = 0; i < currentLayer.OutputSize; i++)
                 {
@@ -635,8 +745,12 @@ namespace SilksongNeuralNetwork
 
         private void UpdateWeightsSGD()
         {
-            foreach (var layer in _layers)
+            if (_trainingLayers == null) return;
+
+            foreach (var layer in _trainingLayers)
             {
+                if (layer == null) continue;
+
                 for (int i = 0; i < layer.InputSize; i++)
                 {
                     for (int j = 0; j < layer.OutputSize; j++)
@@ -665,12 +779,16 @@ namespace SilksongNeuralNetwork
 
         private void UpdateWeightsAdam()
         {
+            if (_trainingLayers == null) return;
+
             double beta1_t = Math.Pow(Beta1, _timestep);
             double beta2_t = Math.Pow(Beta2, _timestep);
             double lr_t = LearningRate * Math.Sqrt(1 - beta2_t) / (1 - beta1_t);
 
-            foreach (var layer in _layers)
+            foreach (var layer in _trainingLayers)
             {
+                if (layer == null) continue;
+
                 for (int i = 0; i < layer.InputSize; i++)
                 {
                     for (int j = 0; j < layer.OutputSize; j++)
@@ -701,6 +819,9 @@ namespace SilksongNeuralNetwork
 
         public bool[] ToActions(float[] outputs, float threshold = 0.5f)
         {
+            if (outputs == null)
+                return new bool[OutputSize];
+
             bool[] actions = new bool[outputs.Length];
             for (int i = 0; i < outputs.Length; i++)
                 actions[i] = outputs[i] >= threshold;
@@ -711,91 +832,111 @@ namespace SilksongNeuralNetwork
         {
             if (string.IsNullOrEmpty(path)) throw new ArgumentNullException(nameof(path));
 
-            Directory.CreateDirectory(Path.GetDirectoryName(path));
-
-            _weightsLock.EnterReadLock();
             try
             {
-                using (var writer = new BinaryWriter(File.Open(path, FileMode.Create)))
+                string directory = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(directory))
+                    Directory.CreateDirectory(directory);
+
+                lock (_swapLock)
                 {
-                    writer.Write(InputSize);
-                    writer.Write(OutputSize);
-                    writer.Write(_layers.Length);
-
-                    foreach (var layer in _layers)
+                    using (var writer = new BinaryWriter(File.Open(path, FileMode.Create)))
                     {
-                        writer.Write(layer.InputSize);
-                        writer.Write(layer.OutputSize);
-                        writer.Write((int)layer.Activation);
+                        writer.Write(InputSize);
+                        writer.Write(OutputSize);
+                        writer.Write(_layers.Length);
 
-                        for (int i = 0; i < layer.InputSize; i++)
+                        foreach (var layer in _layers)
+                        {
+                            if (layer == null) continue;
+
+                            writer.Write(layer.InputSize);
+                            writer.Write(layer.OutputSize);
+                            writer.Write((int)layer.Activation);
+
+                            for (int i = 0; i < layer.InputSize; i++)
+                                for (int j = 0; j < layer.OutputSize; j++)
+                                    writer.Write(layer.Weights[i, j]);
+
                             for (int j = 0; j < layer.OutputSize; j++)
-                                writer.Write(layer.Weights[i, j]);
-
-                        for (int j = 0; j < layer.OutputSize; j++)
-                            writer.Write(layer.Biases[j]);
+                                writer.Write(layer.Biases[j]);
+                        }
                     }
                 }
-            }
-            finally
-            {
-                _weightsLock.ExitReadLock();
-            }
 
-            Debug.Log($"[NeuralNet] Збережено в: {path}");
+                Debug.Log($"[NeuralNet] Збережено в: {path}");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[NeuralNet] Помилка збереження: {ex.Message}");
+                throw;
+            }
         }
 
         public static NeuralNet Load(string path)
         {
             if (!File.Exists(path)) throw new FileNotFoundException($"Файл не знайдено: {path}");
 
-            using (var reader = new BinaryReader(File.Open(path, FileMode.Open)))
+            try
             {
-                int inputSize = reader.ReadInt32();
-                int outputSize = reader.ReadInt32();
-                int layerCount = reader.ReadInt32();
-
-                var hiddenSizes = new List<int>();
-                long startPos = reader.BaseStream.Position;
-
-                for (int l = 0; l < layerCount - 1; l++)
+                using (var reader = new BinaryReader(File.Open(path, FileMode.Open)))
                 {
-                    int inSize = reader.ReadInt32();
-                    int outSize = reader.ReadInt32();
-                    int activation = reader.ReadInt32();
-                    hiddenSizes.Add(outSize);
+                    int inputSize = reader.ReadInt32();
+                    int outputSize = reader.ReadInt32();
+                    int layerCount = reader.ReadInt32();
 
-                    reader.BaseStream.Position += (inSize * outSize + outSize) * sizeof(double);
-                }
+                    var hiddenSizes = new List<int>();
+                    long startPos = reader.BaseStream.Position;
 
-                var net = new NeuralNet(inputSize, outputSize, hiddenSizes.ToArray());
-
-                reader.BaseStream.Position = startPos;
-
-                net._weightsLock.EnterWriteLock();
-                try
-                {
-                    foreach (var layer in net._layers)
+                    for (int l = 0; l < layerCount - 1; l++)
                     {
-                        reader.ReadInt32();
-                        reader.ReadInt32();
-                        reader.ReadInt32();
+                        int inSize = reader.ReadInt32();
+                        int outSize = reader.ReadInt32();
+                        int activation = reader.ReadInt32();
+                        hiddenSizes.Add(outSize);
 
-                        for (int i = 0; i < layer.InputSize; i++)
-                            for (int j = 0; j < layer.OutputSize; j++)
-                                layer.Weights[i, j] = reader.ReadDouble();
-
-                        for (int j = 0; j < layer.OutputSize; j++)
-                            layer.Biases[j] = reader.ReadDouble();
+                        reader.BaseStream.Position += (inSize * outSize + outSize) * sizeof(double);
                     }
-                }
-                finally
-                {
-                    net._weightsLock.ExitWriteLock();
-                }
 
-                Debug.Log($"[NeuralNet] Завантажено з: {path}");
-                return net;
+                    var net = new NeuralNet(inputSize, outputSize, hiddenSizes.ToArray());
+
+                    reader.BaseStream.Position = startPos;
+
+                    lock (net._swapLock)
+                    {
+                        foreach (var layer in net._layers)
+                        {
+                            if (layer == null) continue;
+
+                            reader.ReadInt32();
+                            reader.ReadInt32();
+                            reader.ReadInt32();
+
+                            for (int i = 0; i < layer.InputSize; i++)
+                                for (int j = 0; j < layer.OutputSize; j++)
+                                    layer.Weights[i, j] = reader.ReadDouble();
+
+                            for (int j = 0; j < layer.OutputSize; j++)
+                                layer.Biases[j] = reader.ReadDouble();
+                        }
+
+                        for (int i = 0; i < net._layers.Length; i++)
+                        {
+                            if (net._layers[i] != null && net._trainingLayers[i] != null)
+                            {
+                                net._trainingLayers[i].CopyWeightsFrom(net._layers[i]);
+                            }
+                        }
+                    }
+
+                    Debug.Log($"[NeuralNet] Завантажено з: {path}");
+                    return net;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[NeuralNet] Помилка завантаження: {ex.Message}");
+                throw;
             }
         }
 
@@ -821,9 +962,17 @@ namespace SilksongNeuralNetwork
         public void Dispose()
         {
             StopAsyncTraining();
-            _trainingCts?.Dispose();
-            _trainingSignal?.Dispose();
-            _weightsLock?.Dispose();
+
+            if (_trainingCts != null)
+            {
+                _trainingCts.Dispose();
+                _trainingCts = null;
+            }
+
+            if (_trainingSignal != null)
+            {
+                _trainingSignal.Dispose();
+            }
         }
     }
 }
