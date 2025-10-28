@@ -250,33 +250,12 @@ namespace SilksongNeuralNetwork
 
             var heroType = Agent.Instance.hero.GetType();
 
-            // HELP VARIABLES
-            FieldInfo jumped_stepsField = heroType.GetField("jumped_steps", BindingFlags.NonPublic | BindingFlags.Instance);
-            int jumped_steps = (int)jumped_stepsField.GetValue(Agent.Instance.hero);
-
-            FieldInfo doubleJumpedField = heroType.GetField("doubleJumped", BindingFlags.NonPublic | BindingFlags.Instance);
-            bool doubleJumped = (bool)doubleJumpedField.GetValue(Agent.Instance.hero);
-
             // Movement
             outputData.Add(BoolToFloat(Agent.Instance.myInputActions.Right.IsPressed));
             outputData.Add(BoolToFloat(Agent.Instance.myInputActions.Left.IsPressed));
 
-            // Jump logic
-            if (doubleJumped)
-            {
-                doubleJump = true;
-                jump = false;
-                bigJump = false;
-            }
-
-            if (Agent.Instance.hero.cState.onGround == true)
-            {
-                jumped_stepsField.SetValue(Agent.Instance.hero, 0);
-            }
 
             outputData.Add(BoolToFloat(Agent.Instance.myInputActions.Jump.WasPressed));
-            // outputData.Add(BoolToFloat(bigJump));
-            // outputData.Add(BoolToFloat(doubleJump));
 
             outputData.Add(BoolToFloat(Agent.Instance.myInputActions.Dash.WasPressed));
 
