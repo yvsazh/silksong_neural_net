@@ -12,8 +12,7 @@ namespace SilksongNeuralNetwork
     public class NeuralNet : IDisposable
     {
         private Layer[] _layers;
-        private Layer[] _trainingLayers;
-        private readonly object _swapLock = new object();
+        private readonly object _trainingLock = new object();
         private readonly object _bufferLock = new object();
 
         [ThreadStatic] private static double[] _threadInputCache;
@@ -22,7 +21,7 @@ namespace SilksongNeuralNetwork
         public int InputSize { get; private set; }
         public int OutputSize { get; private set; }
 
-        public double LearningRate { get; set; } = 0.002;
+        public double LearningRate { get; set; } = 0.001;
         public double Momentum { get; set; } = 0.9;
         public double GradientClipValue { get; set; } = 1.0;
         public double L2Regularization { get; set; } = 0.0001;
@@ -37,16 +36,14 @@ namespace SilksongNeuralNetwork
         private int _bufferHead = 0;
         private int _bufferCount = 0;
         private const int MAX_BUFFER_SIZE = 10000;
-        private const int BATCH_SIZE = 32;
+        private const int BATCH_SIZE = 64;
         private const int MIN_BUFFER_SIZE = 128;
 
         private Task _trainingTask;
         private CancellationTokenSource _trainingCts;
         private readonly SemaphoreSlim _trainingSignal = new SemaphoreSlim(0);
         private volatile bool _isTraining = false;
-        private const int TRAINING_INTERVAL_MS = 50;
-        private const int SWAP_INTERVAL = 5;
-        private int _batchesSinceSwap = 0;
+        private const int TRAINING_INTERVAL_MS = 5;
 
         private int _totalSamplesCollected = 0;
         public int TotalSamplesCollected => _totalSamplesCollected;
@@ -63,8 +60,10 @@ namespace SilksongNeuralNetwork
         private int _statsCounter = 0;
 
         private static readonly double[] ACTION_LOSS_WEIGHTS = {
-            0.1, 0.1, 5.0, 5.0, 8.0, 8.0, 8.0, 12.0, 12.0, 12.0, 12.0, 10.0
+            0.8, 0.8, 5.0, 5.0, 8.0, 8.0, 8.0, 12.0, 12.0, 12.0, 12.0, 10.0
         };
+
+        private const int FILE_FORMAT_VERSION = 2;
 
         private struct Experience
         {
@@ -199,58 +198,6 @@ namespace SilksongNeuralNetwork
                         return 1.0;
                 }
             }
-
-            public void CopyWeightsFrom(Layer source)
-            {
-                if (source == null || source.Weights == null || source.Biases == null) return;
-
-                int weightsLength = Math.Min(Weights.Length, source.Weights.Length);
-                int biasesLength = Math.Min(Biases.Length, source.Biases.Length);
-
-                Buffer.BlockCopy(source.Weights, 0, Weights, 0, weightsLength * sizeof(double));
-                Buffer.BlockCopy(source.Biases, 0, Biases, 0, biasesLength * sizeof(double));
-            }
-
-            public void CopyOptimizerStateFrom(Layer source)
-            {
-                if (source == null) return;
-
-                if (source.WeightVelocity != null && WeightVelocity != null)
-                {
-                    int length = Math.Min(WeightVelocity.Length, source.WeightVelocity.Length);
-                    Buffer.BlockCopy(source.WeightVelocity, 0, WeightVelocity, 0, length * sizeof(double));
-                }
-
-                if (source.BiasVelocity != null && BiasVelocity != null)
-                {
-                    int length = Math.Min(BiasVelocity.Length, source.BiasVelocity.Length);
-                    Buffer.BlockCopy(source.BiasVelocity, 0, BiasVelocity, 0, length * sizeof(double));
-                }
-
-                if (source.WeightM != null && WeightM != null)
-                {
-                    int length = Math.Min(WeightM.Length, source.WeightM.Length);
-                    Buffer.BlockCopy(source.WeightM, 0, WeightM, 0, length * sizeof(double));
-                }
-
-                if (source.WeightV != null && WeightV != null)
-                {
-                    int length = Math.Min(WeightV.Length, source.WeightV.Length);
-                    Buffer.BlockCopy(source.WeightV, 0, WeightV, 0, length * sizeof(double));
-                }
-
-                if (source.BiasM != null && BiasM != null)
-                {
-                    int length = Math.Min(BiasM.Length, source.BiasM.Length);
-                    Buffer.BlockCopy(source.BiasM, 0, BiasM, 0, length * sizeof(double));
-                }
-
-                if (source.BiasV != null && BiasV != null)
-                {
-                    int length = Math.Min(BiasV.Length, source.BiasV.Length);
-                    Buffer.BlockCopy(source.BiasV, 0, BiasV, 0, length * sizeof(double));
-                }
-            }
         }
 
         private enum ActivationType
@@ -309,15 +256,6 @@ namespace SilksongNeuralNetwork
             layersList.Add(new Layer(previousSize, OutputSize, ActivationType.Sigmoid));
 
             _layers = layersList.ToArray();
-
-            _trainingLayers = new Layer[_layers.Length];
-            for (int i = 0; i < _layers.Length; i++)
-            {
-                var original = _layers[i];
-                _trainingLayers[i] = new Layer(original.InputSize, original.OutputSize, original.Activation);
-                _trainingLayers[i].CopyWeightsFrom(original);
-                _trainingLayers[i].CopyOptimizerStateFrom(original);
-            }
         }
 
         private void InitializeBuffers()
@@ -342,7 +280,7 @@ namespace SilksongNeuralNetwork
 
             _trainingTask = Task.Run(async () =>
             {
-                Debug.Log("[NeuralNet] Асинхронне навчання запущено (оптимізоване)");
+                Debug.Log("[NeuralNet] Асинхронне навчання запущено");
 
                 while (!_trainingCts.Token.IsCancellationRequested)
                 {
@@ -406,20 +344,18 @@ namespace SilksongNeuralNetwork
 
             double[] current = _threadInputCache;
 
-            var activeLayers = _layers;
-
-            if (activeLayers == null)
+            if (_layers == null)
                 throw new InvalidOperationException("Neural network layers are not initialized");
 
-            for (int l = 0; l < activeLayers.Length; l++)
+            for (int l = 0; l < _layers.Length; l++)
             {
-                if (activeLayers[l] == null)
+                if (_layers[l] == null)
                     throw new InvalidOperationException($"Layer {l} is null");
 
-                if (_threadLayerCache[l] == null || _threadLayerCache[l].Length != activeLayers[l].OutputSize)
-                    _threadLayerCache[l] = new double[activeLayers[l].OutputSize];
+                if (_threadLayerCache[l] == null || _threadLayerCache[l].Length != _layers[l].OutputSize)
+                    _threadLayerCache[l] = new double[_layers[l].OutputSize];
 
-                activeLayers[l].ForwardOptimized(current, _threadLayerCache[l]);
+                _layers[l].ForwardOptimized(current, _threadLayerCache[l]);
                 current = _threadLayerCache[l];
             }
 
@@ -563,22 +499,18 @@ namespace SilksongNeuralNetwork
 
             double totalError = 0;
 
-            for (int i = 0; i < batchCount; i++)
+            lock (_trainingLock)
             {
-                totalError += TrainSingle(batch[i].Input, batch[i].Target);
-            }
+                for (int i = 0; i < batchCount; i++)
+                {
+                    totalError += TrainSingle(batch[i].Input, batch[i].Target);
+                }
 
-            UpdateWeights();
+                UpdateWeights();
+            }
 
             _lastBatchError = totalError / batchCount;
             _runningAvgError = _runningAvgError * ERROR_SMOOTHING + _lastBatchError * (1 - ERROR_SMOOTHING);
-
-            _batchesSinceSwap++;
-            if (_batchesSinceSwap >= SWAP_INTERVAL)
-            {
-                SwapLayers();
-                _batchesSinceSwap = 0;
-            }
 
             return _lastBatchError;
         }
@@ -592,35 +524,6 @@ namespace SilksongNeuralNetwork
             catch (Exception ex)
             {
                 Debug.LogError($"[NeuralNet] TrainBatchAsync error: {ex.Message}\n{ex.StackTrace}");
-            }
-        }
-
-        private void SwapLayers()
-        {
-            lock (_swapLock)
-            {
-                try
-                {
-                    for (int i = 0; i < _layers.Length; i++)
-                    {
-                        if (_layers[i] != null && _trainingLayers[i] != null)
-                        {
-                            _layers[i].CopyWeightsFrom(_trainingLayers[i]);
-                        }
-                    }
-
-                    for (int i = 0; i < _trainingLayers.Length; i++)
-                    {
-                        if (_trainingLayers[i] != null && _layers[i] != null)
-                        {
-                            _trainingLayers[i].CopyOptimizerStateFrom(_layers[i]);
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogError($"[NeuralNet] SwapLayers error: {ex.Message}");
-                }
             }
         }
 
@@ -659,14 +562,14 @@ namespace SilksongNeuralNetwork
 
         private double TrainSingle(double[] input, double[] target)
         {
-            if (_trainingLayers == null || input == null || target == null)
+            if (_layers == null || input == null || target == null)
                 return 0;
 
             double[] current = input;
 
-            for (int l = 0; l < _trainingLayers.Length; l++)
+            for (int l = 0; l < _layers.Length; l++)
             {
-                var layer = _trainingLayers[l];
+                var layer = _layers[l];
                 if (layer == null) continue;
 
                 Buffer.BlockCopy(current, 0, layer.Input, 0,
@@ -699,10 +602,10 @@ namespace SilksongNeuralNetwork
 
         private void BackpropagateWeighted(double[] target)
         {
-            if (_trainingLayers == null || _trainingLayers.Length == 0)
+            if (_layers == null || _layers.Length == 0)
                 return;
 
-            var outputLayer = _trainingLayers[_trainingLayers.Length - 1];
+            var outputLayer = _layers[_layers.Length - 1];
             if (outputLayer == null) return;
 
             for (int i = 0; i < outputLayer.OutputSize; i++)
@@ -714,10 +617,10 @@ namespace SilksongNeuralNetwork
                 outputLayer.Delta[i] = error * weight * outputLayer.ActivationDerivative(output);
             }
 
-            for (int l = _trainingLayers.Length - 2; l >= 0; l--)
+            for (int l = _layers.Length - 2; l >= 0; l--)
             {
-                var currentLayer = _trainingLayers[l];
-                var nextLayer = _trainingLayers[l + 1];
+                var currentLayer = _layers[l];
+                var nextLayer = _layers[l + 1];
 
                 if (currentLayer == null || nextLayer == null) continue;
 
@@ -745,9 +648,9 @@ namespace SilksongNeuralNetwork
 
         private void UpdateWeightsSGD()
         {
-            if (_trainingLayers == null) return;
+            if (_layers == null) return;
 
-            foreach (var layer in _trainingLayers)
+            foreach (var layer in _layers)
             {
                 if (layer == null) continue;
 
@@ -779,13 +682,13 @@ namespace SilksongNeuralNetwork
 
         private void UpdateWeightsAdam()
         {
-            if (_trainingLayers == null) return;
+            if (_layers == null) return;
 
             double beta1_t = Math.Pow(Beta1, _timestep);
             double beta2_t = Math.Pow(Beta2, _timestep);
             double lr_t = LearningRate * Math.Sqrt(1 - beta2_t) / (1 - beta1_t);
 
-            foreach (var layer in _trainingLayers)
+            foreach (var layer in _layers)
             {
                 if (layer == null) continue;
 
@@ -828,6 +731,10 @@ namespace SilksongNeuralNetwork
             return actions;
         }
 
+        // ============================================================================
+        // ЗБЕРЕЖЕННЯ/ЗАВАНТАЖЕННЯ (SINGLE COPY, З OPTIMIZER STATE)
+        // ============================================================================
+
         public void Save(string path)
         {
             if (string.IsNullOrEmpty(path)) throw new ArgumentNullException(nameof(path));
@@ -838,33 +745,72 @@ namespace SilksongNeuralNetwork
                 if (!string.IsNullOrEmpty(directory))
                     Directory.CreateDirectory(directory);
 
-                lock (_swapLock)
+                lock (_trainingLock)
                 {
                     using (var writer = new BinaryWriter(File.Open(path, FileMode.Create)))
                     {
+                        // === HEADER ===
+                        writer.Write(FILE_FORMAT_VERSION);
                         writer.Write(InputSize);
                         writer.Write(OutputSize);
                         writer.Write(_layers.Length);
 
+                        // === OPTIMIZER METADATA ===
+                        writer.Write((int)Optimizer);
+                        writer.Write(_timestep);
+                        writer.Write(LearningRate);
+                        writer.Write(Momentum);
+                        writer.Write(Beta1);
+                        writer.Write(Beta2);
+                        writer.Write(Epsilon);
+
+                        // === LAYERS DATA ===
                         foreach (var layer in _layers)
                         {
                             if (layer == null) continue;
 
+                            // Layer architecture
                             writer.Write(layer.InputSize);
                             writer.Write(layer.OutputSize);
                             writer.Write((int)layer.Activation);
 
+                            // Weights and biases
                             for (int i = 0; i < layer.InputSize; i++)
                                 for (int j = 0; j < layer.OutputSize; j++)
                                     writer.Write(layer.Weights[i, j]);
 
                             for (int j = 0; j < layer.OutputSize; j++)
                                 writer.Write(layer.Biases[j]);
+
+                            // === OPTIMIZER STATE ===
+                            // SGD momentum
+                            for (int i = 0; i < layer.InputSize; i++)
+                                for (int j = 0; j < layer.OutputSize; j++)
+                                    writer.Write(layer.WeightVelocity[i, j]);
+
+                            for (int j = 0; j < layer.OutputSize; j++)
+                                writer.Write(layer.BiasVelocity[j]);
+
+                            // Adam first moment (m)
+                            for (int i = 0; i < layer.InputSize; i++)
+                                for (int j = 0; j < layer.OutputSize; j++)
+                                    writer.Write(layer.WeightM[i, j]);
+
+                            for (int j = 0; j < layer.OutputSize; j++)
+                                writer.Write(layer.BiasM[j]);
+
+                            // Adam second moment (v)
+                            for (int i = 0; i < layer.InputSize; i++)
+                                for (int j = 0; j < layer.OutputSize; j++)
+                                    writer.Write(layer.WeightV[i, j]);
+
+                            for (int j = 0; j < layer.OutputSize; j++)
+                                writer.Write(layer.BiasV[j]);
                         }
                     }
                 }
 
-                Debug.Log($"[NeuralNet] Збережено в: {path}");
+                Debug.Log($"[NeuralNet] Збережено в: {path} (версія {FILE_FORMAT_VERSION}, timestep={_timestep})");
             }
             catch (Exception ex)
             {
@@ -881,61 +827,158 @@ namespace SilksongNeuralNetwork
             {
                 using (var reader = new BinaryReader(File.Open(path, FileMode.Open)))
                 {
+                    // === READ HEADER ===
+                    int version = reader.ReadInt32();
+
+                    if (version != FILE_FORMAT_VERSION && version != 1)
+                    {
+                        Debug.LogWarning($"[NeuralNet] Несумісна версія файлу: {version}");
+                    }
+
                     int inputSize = reader.ReadInt32();
                     int outputSize = reader.ReadInt32();
                     int layerCount = reader.ReadInt32();
 
-                    var hiddenSizes = new List<int>();
-                    long startPos = reader.BaseStream.Position;
+                    // === READ OPTIMIZER METADATA (v2+) ===
+                    OptimizerType optimizerType = OptimizerType.Adam;
+                    int timestep = 0;
+                    double learningRate = 0.002;
+                    double momentum = 0.9;
+                    double beta1 = 0.9;
+                    double beta2 = 0.999;
+                    double epsilon = 1e-8;
 
-                    for (int l = 0; l < layerCount - 1; l++)
+                    if (version >= 2)
+                    {
+                        optimizerType = (OptimizerType)reader.ReadInt32();
+                        timestep = reader.ReadInt32();
+                        learningRate = reader.ReadDouble();
+                        momentum = reader.ReadDouble();
+                        beta1 = reader.ReadDouble();
+                        beta2 = reader.ReadDouble();
+                        epsilon = reader.ReadDouble();
+                    }
+
+                    // === READ ARCHITECTURE ===
+                    var layerInfos = new List<(int inSize, int outSize, int activation)>();
+                    long weightsStartPosition = reader.BaseStream.Position;
+
+                    for (int l = 0; l < layerCount; l++)
                     {
                         int inSize = reader.ReadInt32();
                         int outSize = reader.ReadInt32();
                         int activation = reader.ReadInt32();
-                        hiddenSizes.Add(outSize);
+                        layerInfos.Add((inSize, outSize, activation));
 
-                        reader.BaseStream.Position += (inSize * outSize + outSize) * sizeof(double);
-                    }
+                        // Calculate bytes to skip based on version
+                        long weightsAndBiasesBytes = (inSize * outSize + outSize) * sizeof(double);
+                        long optimizerStateBytes = 0;
 
-                    var net = new NeuralNet(inputSize, outputSize, hiddenSizes.ToArray());
-
-                    reader.BaseStream.Position = startPos;
-
-                    lock (net._swapLock)
-                    {
-                        foreach (var layer in net._layers)
+                        if (version >= 2)
                         {
-                            if (layer == null) continue;
-
-                            reader.ReadInt32();
-                            reader.ReadInt32();
-                            reader.ReadInt32();
-
-                            for (int i = 0; i < layer.InputSize; i++)
-                                for (int j = 0; j < layer.OutputSize; j++)
-                                    layer.Weights[i, j] = reader.ReadDouble();
-
-                            for (int j = 0; j < layer.OutputSize; j++)
-                                layer.Biases[j] = reader.ReadDouble();
+                            // WeightVelocity + BiasVelocity + WeightM + BiasM + WeightV + BiasV
+                            optimizerStateBytes = (
+                                inSize * outSize + outSize + // Velocity
+                                inSize * outSize + outSize + // M
+                                inSize * outSize + outSize   // V
+                            ) * sizeof(double);
                         }
 
-                        for (int i = 0; i < net._layers.Length; i++)
+                        reader.BaseStream.Position += weightsAndBiasesBytes + optimizerStateBytes;
+                    }
+
+                    // === BUILD NETWORK ===
+                    var hiddenSizes = new List<int>();
+                    for (int l = 0; l < layerCount - 1; l++)
+                    {
+                        hiddenSizes.Add(layerInfos[l].outSize);
+                    }
+
+                    var net = new NeuralNet(inputSize, outputSize, hiddenSizes.ToArray(), learningRate, momentum);
+
+                    // Apply loaded hyperparameters
+                    net.Optimizer = optimizerType;
+                    net.Beta1 = beta1;
+                    net.Beta2 = beta2;
+                    net.Epsilon = epsilon;
+                    net._timestep = timestep;
+
+                    // === LOAD WEIGHTS AND OPTIMIZER STATE ===
+                    reader.BaseStream.Position = weightsStartPosition;
+
+                    lock (net._trainingLock)
+                    {
+                        for (int l = 0; l < layerCount; l++)
                         {
-                            if (net._layers[i] != null && net._trainingLayers[i] != null)
+                            var layer = net._layers[l];
+
+                            if (layer == null) continue;
+
+                            // Read metadata
+                            int inSize = reader.ReadInt32();
+                            int outSize = reader.ReadInt32();
+                            int activation = reader.ReadInt32();
+
+                            // Verify architecture match
+                            if (layer.InputSize != inSize || layer.OutputSize != outSize)
                             {
-                                net._trainingLayers[i].CopyWeightsFrom(net._layers[i]);
+                                throw new InvalidDataException(
+                                    $"Layer {l} mismatch: file={inSize}x{outSize}, network={layer.InputSize}x{layer.OutputSize}");
+                            }
+
+                            // === LOAD WEIGHTS ===
+                            for (int i = 0; i < inSize; i++)
+                                for (int j = 0; j < outSize; j++)
+                                    layer.Weights[i, j] = reader.ReadDouble();
+
+                            // === LOAD BIASES ===
+                            for (int j = 0; j < outSize; j++)
+                                layer.Biases[j] = reader.ReadDouble();
+
+                            // === LOAD OPTIMIZER STATE (v2+) ===
+                            if (version >= 2)
+                            {
+                                // WeightVelocity
+                                for (int i = 0; i < inSize; i++)
+                                    for (int j = 0; j < outSize; j++)
+                                        layer.WeightVelocity[i, j] = reader.ReadDouble();
+
+                                // BiasVelocity
+                                for (int j = 0; j < outSize; j++)
+                                    layer.BiasVelocity[j] = reader.ReadDouble();
+
+                                // WeightM
+                                for (int i = 0; i < inSize; i++)
+                                    for (int j = 0; j < outSize; j++)
+                                        layer.WeightM[i, j] = reader.ReadDouble();
+
+                                // BiasM
+                                for (int j = 0; j < outSize; j++)
+                                    layer.BiasM[j] = reader.ReadDouble();
+
+                                // WeightV
+                                for (int i = 0; i < inSize; i++)
+                                    for (int j = 0; j < outSize; j++)
+                                        layer.WeightV[i, j] = reader.ReadDouble();
+
+                                // BiasV
+                                for (int j = 0; j < outSize; j++)
+                                    layer.BiasV[j] = reader.ReadDouble();
                             }
                         }
                     }
 
-                    Debug.Log($"[NeuralNet] Завантажено з: {path}");
+                    string stateInfo = version >= 2
+                        ? $", optimizer={optimizerType}, timestep={timestep}"
+                        : " (legacy v1, optimizer state reset)";
+
+                    Debug.Log($"[NeuralNet] Завантажено з: {path} (версія {version}{stateInfo})");
                     return net;
                 }
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[NeuralNet] Помилка завантаження: {ex.Message}");
+                Debug.LogError($"[NeuralNet] Помилка завантаження: {ex.Message}\n{ex.StackTrace}");
                 throw;
             }
         }
@@ -956,6 +999,7 @@ namespace SilksongNeuralNetwork
                    $"Samples: {_totalSamplesCollected} | " +
                    $"Error: {_lastBatchError:F5} | " +
                    $"AvgError: {_runningAvgError:F5} | " +
+                   $"Timestep: {_timestep} | " +
                    $"Training: {(_isTraining ? "Active" : "Stopped")}";
         }
 

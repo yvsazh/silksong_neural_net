@@ -78,6 +78,20 @@ namespace SilksongNeuralNetwork
                 Agent.Instance.hero.SetDoFullJump();
                 method.Invoke(Agent.Instance.hero, null);
             }
+
+            if (Agent.Instance.hero.CanDoubleJump())
+            {
+                MethodInfo method2 = type.GetMethod(
+                     "DoDoubleJump",
+                     BindingFlags.NonPublic | BindingFlags.Instance
+                 );
+
+                if (Agent.Instance.hero.cState.onGround == false)
+                {
+                    method2.Invoke(Agent.Instance.hero, null);
+                }
+               ;
+            }
         });
 
         /*

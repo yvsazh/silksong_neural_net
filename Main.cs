@@ -376,6 +376,11 @@ namespace SilksongNeuralNetwork
                 Logger.LogInfo($"Model '{_currentModelName}' quick saved!");
             }
 
+            if (Input.GetKeyDown(KeyCode.K))
+            {
+                GameAction.BigJump.Execute();
+            }
+
             if (Input.GetKeyDown(KeyCode.L))
             {
                 if (DebugTools.Instance != null)
@@ -384,6 +389,7 @@ namespace SilksongNeuralNetwork
                 }
             }
 
+            /*
             if (Input.GetKey(KeyCode.L))
             {
                 for (int i = 0; i < 32; i++)
@@ -393,6 +399,7 @@ namespace SilksongNeuralNetwork
                         Logger.LogInfo($"Layer {i}: {layerName}");
                 }
             }
+            */
         }
 
         private void CycleMode()
