@@ -289,6 +289,12 @@ namespace SilksongNeuralNetwork
 
                     // hero.AddSilk(999, false);
 
+                    var type = Agent.Instance.hero.GetType();
+                    FieldInfo field = type.GetField("skillEventTarget", BindingFlags.NonPublic | BindingFlags.Instance);
+                    PlayMakerFSM fsm = (PlayMakerFSM)field.GetValue(Agent.Instance.hero);
+
+                    Logger.LogInfo(target[8]);
+
                     AgentMode currentMode;
                     lock (_modeLock)
                     {
@@ -388,18 +394,6 @@ namespace SilksongNeuralNetwork
                     DebugTools.Instance.Visible = !DebugTools.Instance.Visible;
                 }
             }
-
-            /*
-            if (Input.GetKey(KeyCode.L))
-            {
-                for (int i = 0; i < 32; i++)
-                {
-                    string layerName = LayerMask.LayerToName(i);
-                    if (!string.IsNullOrEmpty(layerName))
-                        Logger.LogInfo($"Layer {i}: {layerName}");
-                }
-            }
-            */
         }
 
         private void CycleMode()

@@ -21,13 +21,13 @@ namespace SilksongNeuralNetwork
             // Налаштовуємо всі системи променів
             RaySensorSystem.Initialize(
                 obstacleRayCount: 20,
-                obstacleMaxDistance: 40f,
-                enemyRayCount: 30,
-                enemyMaxDistance: 40f,
-                enemyProjectilesRayCount: 30,
-                enemyProjectilesMaxDistance: 40f,
-                interactiveObjectRayCount: 20,
-                interactiveObjectMaxDistance: 40f
+                obstacleMaxDistance: 12f,
+                enemyRayCount: 72,
+                enemyMaxDistance: 25f,
+                enemyProjectilesRayCount: 36,
+                enemyProjectilesMaxDistance: 25f,
+                interactiveObjectRayCount: 36,
+                interactiveObjectMaxDistance: 15f
             );
         }
 
@@ -119,12 +119,13 @@ namespace SilksongNeuralNetwork
             List<float> inputData = new List<float>();
 
             List<float> hornetState = new List<float>();
+            List<float> globalActions = new List<float>();
 
             HeroController hero = Agent.Instance.hero;
 
             if (PlayerData.instance != null && hero != null)
             {
-                // ==== БАЗОВІ ПАРАМЕТРИ ====
+                // ==== БАЗОВІ ПАРАМЕТРИ (4 значення) ====
                 hornetState.Add(Normalize(PlayerData.instance.health, PlayerData.instance.maxHealth));
                 hornetState.Add(Normalize(PlayerData.instance.silk, PlayerData.instance.silkMax));
 
@@ -143,6 +144,7 @@ namespace SilksongNeuralNetwork
                 hornetState.Add(BoolToFloat(hero.cState.floating));
 
                 // ==== КЛЮЧОВІ СТАНИ ДАШІВ (4 значення) ====
+                // Об'єднуємо всі види дашів для спрощення
                 bool isAnyDashing = hero.cState.dashing || hero.cState.airDashing ||
                                    hero.cState.superDashing || hero.cState.backDashing ||
                                    hero.cState.shadowDashing;
@@ -177,8 +179,36 @@ namespace SilksongNeuralNetwork
                 hornetState.Add(BoolToFloat(hero.cState.whipLashing));
                 hornetState.Add(BoolToFloat(hero.cState.mantling));
                 hornetState.Add(BoolToFloat(hero.cState.evading));
+
+                // ==== CAN-МЕТОДИ (13 значень) - ДУЖЕ ВАЖЛИВІ! ====
+                hornetState.Add(BoolToFloat(hero.CanJump()));
+                hornetState.Add(BoolToFloat(hero.CanDoubleJump()));
+                hornetState.Add(BoolToFloat(hero.CanDash()));
+                hornetState.Add(BoolToFloat(hero.CanAttack()));
+                hornetState.Add(BoolToFloat(hero.CanTakeDamage()));
+                hornetState.Add(BoolToFloat(hero.CanTryHarpoonDash()));
+                hornetState.Add(BoolToFloat(hero.CanHarpoonDash()));
+                hornetState.Add(BoolToFloat(hero.CanCast()));
+                hornetState.Add(BoolToFloat(hero.CanBind()));
+                hornetState.Add(BoolToFloat(hero.CanNailArt()));
+                hornetState.Add(BoolToFloat(hero.CanSprint()));
+                hornetState.Add(BoolToFloat(hero.CanSuperJump()));
+                hornetState.Add(BoolToFloat(hero.CanThrowTool()));
             }
 
+            // ==== ГЛОБАЛЬНІ ЗДІБНОСТІ (9 значень) ====
+            if (PlayerData.instance != null)
+            {
+                globalActions.Add(BoolToFloat(PlayerData.instance.hasDash));
+                globalActions.Add(BoolToFloat(PlayerData.instance.hasBrolly));
+                globalActions.Add(BoolToFloat(PlayerData.instance.hasWalljump));
+                globalActions.Add(BoolToFloat(PlayerData.instance.hasDoubleJump));
+                globalActions.Add(BoolToFloat(PlayerData.instance.hasQuill));
+                globalActions.Add(BoolToFloat(PlayerData.instance.hasChargeSlash));
+                globalActions.Add(BoolToFloat(PlayerData.instance.hasSuperJump));
+                globalActions.Add(BoolToFloat(PlayerData.instance.hasParry));
+                globalActions.Add(BoolToFloat(PlayerData.instance.hasHarpoonDash));
+            }
 
             // ==== ДАНІ ПРО ВОРОГІВ (5 значень) ====
             List<float> enemyData = GetEnemyData(hero);
@@ -191,6 +221,7 @@ namespace SilksongNeuralNetwork
 
             // ==== ОБ'ЄДНАННЯ ВСІХ ДАНИХ ====
             inputData.AddRange(hornetState);           // ~48 значень
+            inputData.AddRange(globalActions);         // 9 значень
             inputData.AddRange(enemyData);             // 5 значень
             inputData.AddRange(obstacleRaySensorData); // 16 значень (ray count)
             inputData.AddRange(enemyRaySensorData);    // 12 значень (ray count)
@@ -203,6 +234,10 @@ namespace SilksongNeuralNetwork
         public static List<float> GetOutputData()
         {
             List<float> outputData = new List<float>();
+
+            bool jump = false;
+            bool bigJump = false;
+            bool doubleJump = false;
 
             bool attack = false;
             bool downAttack = false;
@@ -266,7 +301,7 @@ namespace SilksongNeuralNetwork
             FieldInfo field = type.GetField("skillEventTarget", BindingFlags.NonPublic | BindingFlags.Instance);
             PlayMakerFSM fsm = (PlayMakerFSM)field.GetValue(Agent.Instance.hero);
 
-            outputData.Add(BoolToFloat(fsm.ActiveStateName != "Idle"));
+            outputData.Add(BoolToFloat(fsm.ActiveStateName == "A Sphere Antic" || fsm.ActiveStateName == "A Sphere" || fsm.ActiveStateName == "A Sphere Recover"));
             outputData.Add(BoolToFloat(usedFirstTool));
             outputData.Add(BoolToFloat(usedSecondTool));
 

@@ -60,7 +60,7 @@ namespace SilksongNeuralNetwork
         private int _statsCounter = 0;
 
         private static readonly double[] ACTION_LOSS_WEIGHTS = {
-            0.8, 0.8, 5.0, 5.0, 8.0, 8.0, 8.0, 12.0, 12.0, 12.0, 12.0, 10.0
+            0.2, 0.2, 5.0, 5.0, 8.0, 8.0, 8.0, 12.0, 12.0, 12.0, 12.0, 10.0
         };
 
         private const int FILE_FORMAT_VERSION = 2;
