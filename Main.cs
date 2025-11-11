@@ -273,6 +273,12 @@ namespace SilksongNeuralNetwork
 
         private void Update()
         {
+            if (GameManager._instance != null && GameManager._instance.GameState == GameState.MAIN_MENU)
+            {
+                _currentMode = AgentMode.Disabled;
+                _interface.UpdateModeText(_currentMode);
+                initialized = false;
+            }
             if (GameManager._instance != null && GameManager._instance.GameState == GameState.PLAYING)
             {
                 if (!initialized)
@@ -292,8 +298,6 @@ namespace SilksongNeuralNetwork
                     var type = Agent.Instance.hero.GetType();
                     FieldInfo field = type.GetField("skillEventTarget", BindingFlags.NonPublic | BindingFlags.Instance);
                     PlayMakerFSM fsm = (PlayMakerFSM)field.GetValue(Agent.Instance.hero);
-
-                    Logger.LogInfo(target[8]);
 
                     AgentMode currentMode;
                     lock (_modeLock)
@@ -380,11 +384,6 @@ namespace SilksongNeuralNetwork
             {
                 SaveModel(_currentModelName);
                 Logger.LogInfo($"Model '{_currentModelName}' quick saved!");
-            }
-
-            if (Input.GetKeyDown(KeyCode.K))
-            {
-                GameAction.BigJump.Execute();
             }
 
             if (Input.GetKeyDown(KeyCode.L))

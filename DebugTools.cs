@@ -25,7 +25,7 @@ namespace SilksongNeuralNetwork
             }
         }
 
-        public bool Visible = true;
+        public bool Visible = false;
 
         // Лінії для відображення шляхів до ворогів
         private List<LineRenderer> _enemyLineRenderers = new List<LineRenderer>();

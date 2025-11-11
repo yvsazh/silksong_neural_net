@@ -142,7 +142,7 @@ namespace SilksongNeuralNetwork
                 hornetState.Add(BoolToFloat(hero.cState.swimming));
                 hornetState.Add(BoolToFloat(hero.cState.floating));
 
-                // ==== КЛЮЧОВІ СТАНИ ДАШІВ (4 значення) ====
+                // ==== КЛЮЧОВІ СТАНИ ДЕШІВ (4 значення) ====
                 bool isAnyDashing = hero.cState.dashing || hero.cState.airDashing ||
                                    hero.cState.superDashing || hero.cState.backDashing ||
                                    hero.cState.shadowDashing;
